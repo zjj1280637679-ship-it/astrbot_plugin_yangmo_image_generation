@@ -1,0 +1,18 @@
+{
+  "schema_version": "image-skill-kb-v3",
+  "knowledge_version": "2026.08.07.1",
+  "master": {"id": "image_creation_master", "path": "MASTER.md"},
+  "fixed_related_type_ids": ["scene_composition"],
+  "types": [
+    {"id": "scene_composition", "path": "types/scene_composition.md"},
+    {"id": "editing_compositing", "path": "types/editing_compositing.md"},
+    {"id": "game_ui_assets", "path": "types/game_ui_assets.md"},
+    {"id": "illustration_character", "path": "types/illustration_character.md"},
+    {"id": "infographic_diagram", "path": "types/infographic_diagram.md"},
+    {"id": "portrait_photography", "path": "types/portrait_photography.md"},
+    {"id": "poster_typography", "path": "types/poster_typography.md"},
+    {"id": "product_advertising", "path": "types/product_advertising.md"},
+    {"id": "realtime_knowledge_visual", "path": "types/realtime_knowledge_visual.md"}
+  ]
+}
+

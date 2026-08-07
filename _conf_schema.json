@@ -1,0 +1,73 @@
+{
+  "ark_api_key": {
+    "description": "火山方舟图片 API Key",
+    "type": "string",
+    "default": "",
+    "hint": "敏感信息。只由本插件读取；不会写入回执、日志或发布包。",
+    "obvious_hint": true
+  },
+  "ark_base_url": {
+    "description": "方舟普通接口地址",
+    "type": "string",
+    "default": "https://ark.cn-beijing.volces.com/api/v3"
+  },
+  "image_models": {
+    "description": "图片模型优先级",
+    "type": "list",
+    "default": [
+      "doubao-seedream-5-0-pro-260628",
+      "doubao-seedream-5-0-260128",
+      "doubao-seedream-4-5-251128"
+    ],
+    "hint": "固定从高到低；仅额度或限流错误才尝试下一项。"
+  },
+  "image_model": {
+    "description": "模型列表为空时的兜底模型",
+    "type": "string",
+    "default": "doubao-seedream-5-0-pro-260628"
+  },
+  "image_size": {
+    "description": "无法识别画幅时的兜底尺寸",
+    "type": "string",
+    "default": "5461x3072"
+  },
+  "ark_plan_fallback": {
+    "description": "普通接口额度不足时使用套餐接口",
+    "type": "bool",
+    "default": true
+  },
+  "ark_plan_base_url": {
+    "description": "方舟套餐接口地址",
+    "type": "string",
+    "default": "https://ark.cn-beijing.volces.com/api/plan/v3"
+  },
+  "ark_plan_api_key": {
+    "description": "套餐专属 API Key",
+    "type": "string",
+    "default": "",
+    "hint": "敏感信息。留空时复用普通接口密钥；不要提交到 GitHub。",
+    "obvious_hint": true
+  },
+  "ark_plan_image_model": {
+    "description": "套餐兜底图片模型",
+    "type": "string",
+    "default": "doubao-seedream-5.0-lite"
+  },
+  "ffmpeg_bin": {
+    "description": "制作 AI 内部预览图的 ffmpeg 路径",
+    "type": "string",
+    "default": "ffmpeg",
+    "hint": "失败只影响缩略预览，不影响原图落库和发送。"
+  },
+  "generated_ttl_days": {
+    "description": "生成图片保留天数",
+    "type": "int",
+    "default": 30
+  },
+  "max_store_bytes": {
+    "description": "本插件生成物存储上限",
+    "type": "int",
+    "default": 2147483648,
+    "hint": "只管理本插件自己的文件；按最近使用时间清理。"
+  }
+}
