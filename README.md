@@ -1,62 +1,162 @@
 # AI 图片生成与原图交付
 
-让 AstrBot 主 Agent 直接完成图片生成、参考图编辑、合成、内部预览和原图发送。v0.2.0 起插件完全使用 AstrBot 原生 Skill 渐进披露，不再自建 `prepare`、一次性句柄或固定工具调用顺序。
+给 AstrBot 主 Agent 增加一层轻量图片 harness：图片 Skill 使用 AstrBot 原生渐进披露，图片 Tool 始终可直接调用；生成默认自动交付原图，但 Agent 可以按上下文延迟交付、比较候选、继续编辑、穿插语言或调用其他工具。
 
 交流与反馈：**QQ 群 916646029**
 
-## 核心逻辑
+## 设计原则
 
-AstrBot 原生 Skills 本身就是两阶段：
+本插件不再自建第二套 Agent 工作流。
+
+```text
+AstrBot Agent
+  ├─ 自己决定：是否说话、检索、分析、调用其他工具
+  ├─ 自己决定：现在要不要生成图片
+  ├─ 自己决定：快速直出还是先比较/迭代
+  └─ 自己决定：是否延迟交付
+
+Image Skill
+  └─ 提供按需创作方法，不是权限门
+
+Image Harness
+  ├─ generate_image
+  ├─ 默认自动交付
+  ├─ auto_send=false 可延迟交付
+  ├─ genimg: 稳定引用
+  └─ preview 回到同一个 Agent loop
+```
+
+核心边界是：
+
+**Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用。**
+
+插件不要求固定预告、固定总结、固定工具顺序或最终文本。
+
+## AstrBot 原生 Skill 两阶段
+
+AstrBot Skills 使用渐进披露：
 
 ```text
 阶段 1：Skill inventory
-  只把 name + description + SKILL.md 路径提供给模型
+  只提供 name + description + SKILL.md 路径
 
 阶段 2：命中任务后
-  模型读取 skills/image-generation/SKILL.md
+  读取 skills/image-generation/SKILL.md
   再按任务需要读取少量 references/*.md
 ```
 
-本插件不再在 Tool Result 里重复实现第二套“伪 Skill 激活器”。图片工具始终是普通 LLM Tool，AI 可以在任何合适的推理步骤直接调用：
-
-```text
-generate_image(...)
-send_generated_images(...)
-list_image_capabilities()
-```
-
-**Skill 是工作方法，不是权限门；Tool 是执行接口。**
+本插件不在 Tool Result 里重复注入另一套“Skill 激活器”。入口 Skill 只是工作方法，工具不以 Skill 是否加载作为调用条件。
 
 ## 工具
 
 ### `generate_image`
 
-直接生成、编辑或合成图片。无需 `prepare_image_generation`，无需句柄，也没有固定前置步骤。
+直接生成、编辑或合成图片：
 
 ```text
 prompt: 完整图片指令
 refs: [] | ["current", "genimg:..."]
 count: 1..15
 aspect: landscape / portrait / square / photo / wide / W:H
+auto_send: true | false，默认 true
 ```
 
-返回：
+默认 `auto_send=true`：生成成功后插件立即发送原文件，同时把 `genimg:` 与内部预览返回给当前 Agent。这样普通生图不需要模型再做一次机械发送调用。
 
-- `genimg:` 稳定引用；
-- 内部预览，供当前 AI 观察；
-- 实际模型、调用次数、参考图解析结果等结构化信息。
+如果任务需要先比较候选、内部检查、继续编辑、择优交付或“先别发”，Agent 可以直接传 `auto_send=false`。这不是另一套生命周期，只是把交付时机留给 Agent。
 
-调用该工具会产生真实外部图片 API 请求。
+每次 `generate_image` 都会执行真实外部图片 API，并可能产生费用。
 
 ### `send_generated_images`
 
-把已有 `genimg:` 对应的原文件发送到当前聊天。它可以独立调用；发送失败时可以重试同一引用，不需要重新生成。
+发送或重发已有 `genimg:` 原文件。主要用于：
+
+- `auto_send=false` 后择优交付；
+- 自动发送部分失败后的补发；
+- 用户要求重发；
+- 稍后交付历史生成物。
+
+它不是 `generate_image` 的必经下一步。
 
 ### `list_image_capabilities`
 
-只读能力查询。只有模型、画幅、参考图边界或输出数量不确定时才需要调用；它不是生成前置步骤。
+只读能力查询。用于确认模型、画幅、参考图边界、输出数量、交付策略或 prompt 指导；不是生成前置步骤。
 
-## 原生 Skill
+## 上下文自适应，而不是模式枚举
+
+插件没有 `fast_mode`、`slow_mode`、`quality_mode` 之类硬编码。主 Agent 直接从用户语境决定认知预算和工具轨迹。
+
+### 快速路径
+
+用户：
+
+```text
+立刻画一个苹果，越快越好。
+```
+
+理想行为：
+
+```text
+Agent
+  → 不做无价值预告/查询
+  → generate_image(..., auto_send=true)
+Harness
+  → 调 API
+  → 保存
+  → 自动发原图
+  → preview + genimg 回 Agent
+Agent
+  → 可直接结束
+```
+
+用户最终可以只看到图片。
+
+### Agentic 路径
+
+用户：
+
+```text
+先认真构思，最多尝试三次，先别发候选，选最好的一张交付，最后锐评一下。
+```
+
+理想行为：
+
+```text
+Agent 预告（因为用户要求）
+  → 读取必要 Skill/reference
+  → generate_image(auto_send=false)
+  → 看 preview
+  → 必要时继续第 2/3 次
+  → 选 best genimg
+  → send_generated_images(best)
+  → 根据 preview 继续锐评
+```
+
+“最多三次”属于本次任务预算，由 AstrBot Agent 自己遵守；插件不会把它固化为全局重试规则。
+
+## Prompt 策略
+
+插件不把“提示词越长越好”当成默认假设。
+
+当前方舟公开资料更强调连贯自然语言、明确主体/行为/环境/用途和美学约束；部分 Seedream 指南还明确提醒，提示词过长可能让信息分散。因此本插件采用：
+
+```text
+高语义密度 > 机械堆字数
+```
+
+`list_image_capabilities` 会报告当前没有可靠的模型级硬 prompt 上限，并明确 `do_not_pad_to_percentage=true`。如果用户要求“写到上限 80%”，在没有可信硬上限时，Agent 应理解为充分展开有效视觉约束，而不是用同义反复填满假定长度。
+
+## Agent 自由
+
+插件同时保留两种自由。
+
+**积极自由：** Agent 可以自由组合语言、图片、检索、分析和其他工具；可以连续编辑，也可以先内部比较再交付。
+
+**消极自由：** 插件不强迫 Agent 预告、总结、固定顺序、最终文本、固定尝试次数，也不要求 Skill 激活以后才能调用图片工具。
+
+默认自动发图只是 harness 默认副作用：当 Agent 已经决定生成时，插件替它完成最常见的机械交付。
+
+## 原生 Skill 资料
 
 入口：
 
@@ -64,7 +164,7 @@ aspect: landscape / portrait / square / photo / wide / W:H
 skills/image-generation/SKILL.md
 ```
 
-初始上下文只暴露该 Skill 的名称和描述。命中图片任务后，AstrBot 按原生 Skills 规则读取 `SKILL.md`；其中再直接引用专项资料：
+按需引用：
 
 - 场景与构图；
 - 编辑与合成；
@@ -76,31 +176,7 @@ skills/image-generation/SKILL.md
 - 游戏 UI / 资产；
 - 实时知识视觉化。
 
-只读取当前任务真正需要的最少资料，不批量加载整个技能目录。
-
-## AI 可以自由决定调用顺序
-
-插件不强制：
-
-```text
-prepare → generate → send
-```
-
-而是允许：
-
-```text
-直接 generate
-
-generate → 看预览 → send
-
-generate → 看预览 → 再 generate 编辑 → send
-
-已有 genimg → 直接 send
-
-不确定能力 → list → generate
-```
-
-如果当前任务不需要把图片真正发送到聊天，AI 也可以生成后继续完成其他推理；插件不会用生命周期守卫阻止它。
+只读取当前任务真正需要的最少资料，不批量加载整个目录。
 
 ## 参考图
 
@@ -130,7 +206,7 @@ generate → 看预览 → 再 generate 编辑 → send
 1. 在 AstrBot 插件管理中使用仓库 URL 安装，或上传 ZIP。
 2. AstrBot 版本需满足 `>=4.26.1`。
 3. 在插件配置中填写火山方舟 API Key。
-4. 根据自己的服务开通情况检查模型名、普通接口和套餐接口地址。
+4. 根据服务开通情况检查模型名、普通接口和套餐接口地址。
 5. 保存配置并重载插件。
 
 仓库：
@@ -160,15 +236,15 @@ https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation
 
 - API Key 只从 AstrBot 插件配置读取，不写入日志和工具回执；
 - 参考图会按图片 API 要求提交给配置的服务商；
-- 内部预览会作为工具结果提供给当前主模型检查；如果主模型是云服务，预览可能发送给该模型提供商；
+- 内部预览会作为工具结果提供给当前主模型；如果主模型是云服务，预览可能发送给该模型提供商；
 - 原图保存在 AstrBot 插件数据目录；
-- `generate_image` 的内部预览不等于已经发送到聊天；
-- `send_generated_images` 才执行原文件真实发送；
+- `generate_image` 默认会自动把成功产物作为原文件发送到当前聊天；
+- `auto_send=false` 时只保存并返回内部预览/引用，不自动交付；
 - 本插件不修改 AstrBot 人格、主对话历史或其他插件配置。
 
-## v0.1.x 升级说明
+## 从 v0.1.x 升级
 
-v0.2.0 删除旧协议：
+v0.2.x 已删除：
 
 ```text
 prepare_image_generation
@@ -177,7 +253,7 @@ image_task_handle
 一次性 prepare/consume 状态
 ```
 
-升级后，旧的 `prepare_image_generation` 工具不存在；主 Agent 应直接使用 `generate_image`。这属于有意的接口简化。
+主 Agent 直接使用 `generate_image`。这是有意的接口简化。
 
 ## 许可
 
