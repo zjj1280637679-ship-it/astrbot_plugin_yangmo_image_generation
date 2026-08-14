@@ -1,279 +1,186 @@
-# AI 图片生成与原图交付
+# AI 图片与视频生成及原图交付
 
-给 AstrBot 主 Agent 增加一层轻量图片 harness：图片 Skill 使用 AstrBot 原生渐进披露，图片 Tool 始终可直接调用；默认先立即发一条很短的开始通知，再执行图片生成并自动交付原图。Agent 仍可按上下文关闭预告、延迟交付、比较候选、继续编辑、穿插语言或调用其他工具。
+给 AstrBot 主 Agent 增加一层轻量生成 harness：图片使用 Seedream，视频使用 `doubao-seedance-1-0-pro-250528`。两个能力都遵循 AstrBot 原生 Skill 渐进披露，Tool 可随时直接调用；默认先立即短通知，再执行真实生成并自动交付。Agent 仍可按上下文关闭预告、延迟交付、做候选比较、继续编辑或穿插其他工具。
 
 交流与反馈：**QQ 群 916646029**
 
-## 设计原则
-
-本插件不自建第二套 Agent 工作流。
+## 核心设计
 
 ```text
 AstrBot Agent
-  ├─ 自己决定：是否说话、检索、分析、调用其他工具
-  ├─ 自己决定：现在要不要生成图片
-  ├─ 自己决定：快速直出还是先比较/迭代
-  ├─ 自己决定：是否关闭默认短预告
-  └─ 自己决定：是否延迟交付
+  ├─ 决定是否检索 / 分析 / 说话 / 调其他工具
+  ├─ 决定何时生成图片或视频
+  ├─ 决定快速直出还是内部比较
+  └─ 决定是否关闭默认预告或延迟交付
 
-Image Skill
-  └─ 提供按需创作方法，不是权限门
+Native Skills
+  ├─ image-generation
+  └─ video-generation
 
-Image Harness
-  ├─ generate_image
-  ├─ 默认立即短预告
+Generation Harness
+  ├─ generate_image / send_generated_images
+  ├─ generate_video / send_generated_videos
+  ├─ 默认即时短通知
   ├─ 默认自动交付
-  ├─ announce=false 可静默生成
-  ├─ auto_send=false 可延迟交付
-  ├─ genimg: 稳定引用
-  └─ preview 回到同一个 Agent loop
+  └─ 结果重新回到同一个 Agent loop
 ```
 
-核心边界是：
+**Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担等待期反馈、API 调用、持久化和机械交付。**
 
-**Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用和等待期反馈。**
+插件没有 `prepare`、一次性句柄或固定工具顺序。
 
-默认短预告不是固定工作流：如果 Agent 已经自己说过“我开始做了”，或者用户明确要求只发图片、不发文字，调用时把 `announce=false` 即可。
+## 图片能力
 
-## AstrBot 原生 Skill 两阶段
+`generate_image(prompt, refs, count, aspect, auto_send=true, announce=true)`：
 
-AstrBot Skills 使用渐进披露：
+- 文生图、编辑、合成；
+- `current` 或本插件 `genimg:` 作为参考图；
+- 默认即时预告并自动发送原文件；
+- `auto_send=false` 可用于候选比较；
+- 返回内部预览和稳定 `genimg:` 引用。
+
+`send_generated_images(refs)` 用于补发、重发或延迟交付。
+
+## Seedance 视频能力
+
+默认模型：
 
 ```text
-阶段 1：Skill inventory
-  只提供 name + description + SKILL.md 路径
-
-阶段 2：命中任务后
-  读取 skills/image-generation/SKILL.md
-  再按任务需要读取少量 references/*.md
+doubao-seedance-1-0-pro-250528
 ```
 
-本插件不在 Tool Result 里重复注入另一套“Skill 激活器”。入口 Skill 只是工作方法，工具不以 Skill 是否加载作为调用条件。
+`generate_video(prompt, first_frame, duration, ratio, resolution, return_last_frame, auto_send, announce)` 当前稳定暴露：
+
+- 文生视频；
+- 单首帧图生视频；
+- 5 秒 / 10 秒；
+- `adaptive / 1:1 / 16:9 / 4:3 / 21:9 / 9:16 / 3:4`；
+- `480p / 720p / 1080p`；
+- 方舟异步任务创建 + 轮询；
+- 成功后下载 MP4 到插件私有存储；
+- 默认自动作为 AstrBot `Video` 消息发送；
+- 返回 `genvideo:`；
+- 请求 `return_last_frame=true` 时，若服务端返回尾帧 URL，会保存为 `genframe:`，可直接作为下一段视频首帧。
+
+首尾帧同时约束在资料中存在口径差异，因此 v0.3.0 **不把它冒充为稳定能力**。
+
+## 视频首帧来源与插件互操作
+
+`first_frame` 支持：
+
+```text
+""                  文生视频
+current             当前用户消息第一张图
+genimg:...          本插件历史生成图片
+genframe:...        本插件历史视频尾帧
+resolved            本轮最近一个工具返回的 ImageContent
+```
+
+`resolved` 是和其他插件协作的关键，但不会产生硬依赖。
+
+例如你的群聊图片定位插件已经提供：
+
+```text
+ctximg:...
+→ resolve_context_images(...)
+→ 原图作为 ImageContent 回到当前 AstrBot Agent
+→ generate_video(first_frame="resolved")
+```
+
+本插件只观察当前工具结果里的公开图片内容；**不会 import 其他插件，不会读取其他插件数据库，也不会自行解释 `ctximg:` 私有提取码。** 因此：
+
+- 单独安装：当前消息图片 + 文生视频照常工作；
+- 与图片定位/搜索插件一起装：可先解析历史图片，再作为首帧；
+- 与其他插件一起装：各自状态和存储仍独立，不抢工具名、不共享数据库。
+
+原则是：**跨插件传递公开内容，不跨插件偷读内部状态。**
+
+## 视频提示词
+
+Seedance 提示词重点描述“变化”，推荐组织：
+
+```text
+主体状态
+→ 动作变化
+→ 环境响应
+→ 镜头运动
+→ 时间顺序
+→ 光影/风格
+→ 连续性约束
+```
+
+首帧图生视频时，少重复静态画面，多描述接下来怎么动。例如：
+
+> 保持首帧人物身份、服装、翅膀结构和背景连续。人物先缓慢抬头，随后展开双翼；羽毛受气流轻微抖动，衣摆自然摆动。镜头由中景缓慢后移，最后人物离地上升。不要新增人物，不要突然换景，不改变面部与服装设计。
+
+## 上下文自适应
+
+快速任务：
+
+```text
+用户：立刻做个视频，越快越好。
+Agent → generate_video(announce=true, auto_send=true)
+Harness → 立即短通知 → 创建任务 → 轮询 → 下载 → 自动发视频
+```
+
+候选任务：
+
+```text
+用户：先做三版，自己比较，只发最好的一版。
+Agent 第一次可预告
+→ generate_video(announce=false, auto_send=false)
+→ 看预览
+→ 最多继续本次任务要求的次数
+→ send_generated_videos(best)
+```
+
+“最多 N 次”属于当前 Agent 任务预算，不是插件全局重试规则。
 
 ## 工具
 
-### `generate_image`
+- `generate_image`
+- `send_generated_images`
+- `generate_video`
+- `send_generated_videos`
+- `list_generation_capabilities`
+- `list_image_capabilities`（保留兼容旧调用）
 
-直接生成、编辑或合成图片：
+## 配置
 
-```text
-prompt: 完整图片指令
-refs: [] | ["current", "genimg:..."]
-count: 1..15
-aspect: landscape / portrait / square / photo / wide / W:H
-auto_send: true | false，默认 true
-announce: true | false，默认 true
-```
+图片与视频默认共用 `ark_api_key`。如果视频单独使用另一把 Key，可填写 `video_api_key`。
 
-默认 `announce=true`：工具完成最基本的参数检查后立即向当前聊天发送一条简短开始通知，然后才进入参考图解析和图片 API 请求。这样即使生成耗时较长，用户也会立刻知道任务已经开始。
+视频相关配置：
 
-默认 `auto_send=true`：生成成功后插件立即发送原文件，同时把 `genimg:` 与内部预览返回给当前 Agent。普通生图不需要模型再做一次机械发送调用。
+| 配置 | 默认值 | 作用 |
+| --- | --- | --- |
+| `video_model` | `doubao-seedance-1-0-pro-250528` | Seedance 视频模型 |
+| `video_base_url` | 方舟 `/api/v3` | 视频任务 API 基础地址 |
+| `video_api_key` | 空 | 留空复用 `ark_api_key` |
+| `video_poll_interval_seconds` | `4` | 任务状态轮询间隔 |
+| `video_timeout_seconds` | `600` | 单次 Tool 等待上限 |
+| `max_video_download_mb` | `256` | 单视频下载上限 |
+| `max_video_store_bytes` | `8589934592` | 视频/尾帧私有存储上限 |
 
-如果 Agent 调用工具前已经自己预告，或者用户明确要求“只发图 / 不要文字”，使用 `announce=false`。如果任务需要先比较候选、内部检查、继续编辑、择优交付或“先别发”，使用 `auto_send=false`。
+视频生成使用方舟异步接口；Tool 等待超时不等于服务端任务已经取消，错误回执会保留 `task_id`（如果已经成功创建）。
 
-预告发送失败不会阻断图片生成；图片生成、交付和后续 Agent loop 仍按正常路径继续。
+## 独立性与隐私
 
-每次 `generate_image` 都会执行真实外部图片 API，并可能产生费用。
-
-### `send_generated_images`
-
-发送或重发已有 `genimg:` 原文件。主要用于：
-
-- `auto_send=false` 后择优交付；
-- 自动发送部分失败后的补发；
-- 用户要求重发；
-- 稍后交付历史生成物。
-
-它不是 `generate_image` 的必经下一步。
-
-### `list_image_capabilities`
-
-只读能力查询。用于确认模型、画幅、参考图边界、输出数量、默认短预告、交付策略或 prompt 指导；不是生成前置步骤。
-
-## 上下文自适应，而不是模式枚举
-
-插件没有 `fast_mode`、`slow_mode`、`quality_mode` 之类硬编码。主 Agent 直接从用户语境决定认知预算和工具轨迹。
-
-### 快速路径
-
-用户：
-
-```text
-立刻画一个苹果，越快越好。
-```
-
-理想行为：
-
-```text
-Agent
-  → 不做无价值查询
-  → generate_image(..., announce=true, auto_send=true)
-Harness
-  → 立刻发短通知
-  → 调 API
-  → 保存
-  → 自动发原图
-  → preview + genimg 回 Agent
-Agent
-  → 可直接结束
-```
-
-用户不会在图片生成期间面对长时间无反馈。
-
-如果用户明确说：
-
-```text
-只发图片，不要任何文字。
-```
-
-则 Agent 可以直接：
-
-```text
-generate_image(..., announce=false, auto_send=true)
-```
-
-### Agentic 路径
-
-用户：
-
-```text
-先认真构思，最多尝试三次，先别发候选，选最好的一张交付，最后锐评一下。
-```
-
-理想行为：
-
-```text
-Agent 自己先预告
-  → 读取必要 Skill/reference
-  → generate_image(announce=false, auto_send=false)
-  → 看 preview
-  → 必要时继续第 2/3 次，后续可继续 announce=false
-  → 选 best genimg
-  → send_generated_images(best)
-  → 根据 preview 继续锐评
-```
-
-“最多三次”属于本次任务预算，由 AstrBot Agent 自己遵守；插件不会把它固化为全局重试规则。默认短预告也不是要求每一轮候选都重复发送，Agent 可以按上下文关闭它，避免刷屏。
-
-## Prompt 策略
-
-插件不把“提示词越长越好”当成默认假设。
-
-当前采用：
-
-```text
-高语义密度 > 机械堆字数
-```
-
-`list_image_capabilities` 会报告当前没有可靠的模型级硬 prompt 上限，并明确 `do_not_pad_to_percentage=true`。如果用户要求“写到上限 80%”，在没有可信硬上限时，Agent 应理解为充分展开有效视觉约束，而不是用同义反复填满假定长度。
-
-## Agent 自由
-
-插件同时保留两种自由。
-
-**积极自由：** Agent 可以自由组合语言、图片、检索、分析和其他工具；可以连续编辑，也可以先内部比较再交付。
-
-**消极自由：** 插件不强迫 Agent 自己写预告、总结、固定顺序、最终文本、固定尝试次数，也不要求 Skill 激活以后才能调用图片工具。默认短预告和默认自动发图都可以由调用参数关闭，它们只是 harness 的 UX 默认值。
-
-## 原生 Skill 资料
-
-入口：
-
-```text
-skills/image-generation/SKILL.md
-```
-
-按需引用：
-
-- 场景与构图；
-- 编辑与合成；
-- 插画与角色；
-- 人像摄影；
-- 海报与文字排版；
-- 产品广告；
-- 信息图；
-- 游戏 UI / 资产；
-- 实时知识视觉化。
-
-只读取当前任务真正需要的最少资料，不批量加载整个目录。
-
-## 参考图
-
-- `current`：当前用户消息中的图片；
-- `genimg:`：本插件在当前会话作用域保存的历史生成物；
-- 参考图按内容去重；
-- 最多 14 张；
-- 单张最多 30 MiB；
-- 宽和高都必须大于 14 像素；
-- 比例须在 `1:16..16:1` 内；
-- 总像素不超过 3600 万；
-- 5 Pro 候选最多接收 10 张，超过时会选择后续兼容模型。
-
-其他插件提取码、QQ `file_id` 或临时 ID 不属于本插件引用域。
-
-## 模型降级
-
-- 默认按配置中的固定模型优先级尝试；
-- 每个候选模型最多调用一次；
-- 只有零结果且属于额度/限流类错误时才尝试下一候选；
-- 一旦得到任何成功图片就停止降级；
-- 不循环补画来凑足图片数量；
-- 成功和失败回执都报告插件实际发起的 `api_calls`。
+- 图片存储、视频存储、尾帧存储都位于本插件数据目录；
+- `genimg:`、`genvideo:`、`genframe:` 按当前会话 scope 隔离；
+- API Key 不写入日志、回执或仓库；
+- 其他插件返回的图片只在当前事件中作为临时互操作内容使用，不持久化对方提取码协议；
+- 本插件不修改 AstrBot 人格、主历史或其他插件配置；
+- 视频/图片预览会作为 Tool Result 交给当前主模型，如果主模型是云服务，相应预览可能发送给该模型提供商。
 
 ## 安装
 
-1. 在 AstrBot 插件管理中使用仓库 URL 安装，或上传 ZIP。
-2. AstrBot 版本需满足 `>=4.26.1`。
-3. 在插件配置中填写火山方舟 API Key。
-4. 根据服务开通情况检查模型名、普通接口和套餐接口地址。
-5. 保存配置并重载插件。
+AstrBot `>=4.26.1`。安装仓库后填写方舟 Key 并重载插件即可。
 
 仓库：
 
 ```text
 https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation
 ```
-
-## 配置
-
-| 配置项 | 默认值 | 作用 |
-| --- | --- | --- |
-| `ark_api_key` | 空 | 方舟普通图片 API 密钥 |
-| `ark_base_url` | 方舟北京普通接口 | 普通接口地址 |
-| `image_models` | 5 Pro → 5 → 4.5 | 普通接口固定模型优先级 |
-| `image_model` | 5 Pro | 模型列表为空时的兜底模型 |
-| `image_size` | `5461x3072` | 无法识别画幅时的兜底尺寸 |
-| `ark_plan_fallback` | `true` | 普通接口额度不足时尝试套餐接口 |
-| `ark_plan_base_url` | 方舟套餐接口 | 套餐接口地址 |
-| `ark_plan_api_key` | 空 | 套餐密钥；留空复用普通密钥 |
-| `ark_plan_image_model` | Seedream 5 Lite | 套餐兜底模型 |
-| `ffmpeg_bin` | `ffmpeg` | 制作内部预览；失败不影响原图 |
-| `generated_ttl_days` | `30` | 本插件生成物保留天数 |
-| `max_store_bytes` | `2147483648` | 本插件生成物存储上限 |
-
-## 隐私与交付
-
-- API Key 只从 AstrBot 插件配置读取，不写入日志和工具回执；
-- 参考图会按图片 API 要求提交给配置的服务商；
-- 内部预览会作为工具结果提供给当前主模型；如果主模型是云服务，预览可能发送给该模型提供商；
-- 原图保存在 AstrBot 插件数据目录；
-- `generate_image` 默认先发送短通知，再自动把成功产物作为原文件发送到当前聊天；
-- `announce=false` 时不会发送默认短通知；
-- `auto_send=false` 时只保存并返回内部预览/引用，不自动交付；
-- 本插件不修改 AstrBot 人格、主对话历史或其他插件配置。
-
-## 从 v0.1.x 升级
-
-v0.2.x 已删除：
-
-```text
-prepare_image_generation
-image_task_handle
-自定义 knowledge manifest 激活
-一次性 prepare/consume 状态
-```
-
-主 Agent 直接使用 `generate_image`。这是有意的接口简化。
 
 ## 许可
 
