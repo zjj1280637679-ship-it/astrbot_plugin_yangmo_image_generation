@@ -3,7 +3,7 @@ display_name: "AI 图片生成与原图交付"
 desc: "让你的 AI 按完整工具生命周期完成高质量图片生成、编辑、预览与原图交付；插件独立运行，不复用其他插件状态。"
 short_desc: "让 AI 完成图片生成、编辑、预览和原图交付。"
 version: "0.1.0"
-astrbot_version: ">=4.26.1,<4.27"
+astrbot_version: ">=4.26.1"
 author: "羊膜大人"
 repo: "https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation"
 support_platforms:
