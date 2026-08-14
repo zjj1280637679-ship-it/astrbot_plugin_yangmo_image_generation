@@ -1,8 +1,8 @@
 name: astrbot_plugin_yangmo_image_generation
 display_name: "AI 图片生成与原图交付"
-desc: "让 AI 直接完成图片生成、编辑、预览与原图交付；使用 AstrBot 原生 Skill 渐进披露，不设 prepare 句柄或固定调用顺序。"
-short_desc: "原生 Skill 两阶段加载，图片工具可由 AI 直接调用。"
-version: "0.2.0"
+desc: "让 AI 自由调用图片工具并默认自动交付原图；使用 AstrBot 原生 Skill 渐进披露，不设 prepare、固定工具顺序或强制前后话术。"
+short_desc: "原生 Skill 两阶段 + Agent 自由调用 + 默认自动发图。"
+version: "0.2.1"
 astrbot_version: ">=4.26.1"
 author: "羊膜大人"
 repo: "https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation"
