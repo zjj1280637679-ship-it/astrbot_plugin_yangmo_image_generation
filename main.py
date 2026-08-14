@@ -14,7 +14,6 @@ from astrbot.api.message_components import File, Image
 from astrbot.api.star import StarTools
 from mcp.types import CallToolResult, ImageContent, TextContent
 
-from . import lifecycle, skills
 from .api import (
     ArkImageClient,
     ImageApiError,
@@ -27,7 +26,7 @@ from .api import (
 from .store import GeneratedImage, GeneratedImageStore
 
 PLUGIN_NAME = "astrbot_plugin_yangmo_image_generation"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MAX_REFERENCE_IMAGES = 14
 MAX_REFERENCE_BYTES = 30 * 1024 * 1024
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -70,40 +69,6 @@ class IndependentImageGeneration(star.Star):
         self._last_cleanup = 0.0
         logger.info("[yangmo.image] ready version=%s store=%s", VERSION, root)
 
-    @filter.llm_tool(name="prepare_image_generation")
-    async def prepare_image_generation(
-        self,
-        event: AstrMessageEvent,
-        announcement: str,
-        related_skill_ids: list[str] | None = None,
-    ) -> str:
-        """接受图片任务后建立一次性生成句柄，并加载总技能与少量相关作品技能。
-
-        契约：A ::= 非空生成预告；K ::= 0..3 个作品技能 ID；
-        prepare(A,K) -> t，其中 t 仅属于当前事件且只可消费一次。
-        prepare 不发消息、不调用图片 API；后续 generate(t,...) 会先发送 A，再调用图片 API。
-
-        Args:
-            announcement(string): A；将在真正生成前发送给用户。
-            related_skill_ids(list[string]): K；可选，最多 3 个。可用 ID：editing_compositing、game_ui_assets、illustration_character、infographic_diagram、portrait_photography、poster_typography、product_advertising、realtime_knowledge_visual；不确定时留空。
-        """
-        try:
-            prepared = lifecycle.prepare(event, announcement, related_skill_ids)
-        except Exception as exc:
-            return f"IMAGE_PREPARATION_FAILED reason={str(exc)[:300]}"
-        warnings = ",".join(prepared["selection_warnings"]) or "none"
-        activated = ",".join(prepared["activated_skill_ids"])
-        return (
-            f"IMAGE_PREPARATION_READY image_task_handle={prepared['handle']} "
-            "context=current_full_tool_loop "
-            f"knowledge_version={prepared['knowledge_version']} "
-            f"knowledge_status={prepared['knowledge_status']} "
-            f"selection_status={prepared['selection_status']} warnings={warnings} "
-            f"activated={activated}\n下一模型步骤调用 generate_image 时原样传入句柄；"
-            "句柄只属于当前事件并且只能消费一次。\n"
-            f"{prepared['activation_markdown']}"
-        )
-
     @filter.llm_tool(name="generate_image")
     async def generate_image(
         self,
@@ -112,54 +77,46 @@ class IndependentImageGeneration(star.Star):
         refs: list[str] | None = None,
         count: int = 1,
         aspect: str = "landscape",
-        image_task_handle: str = "",
     ) -> CallToolResult:
-        """消费准备句柄以生成、编辑或合成图片；返回内部预览与 genimg 提取码，不向聊天发图。
+        """直接生成、编辑或合成图片；任何模型步骤都可调用，无需 prepare 或任务句柄。
 
-        契约：t ::= prepare 返回的一次性句柄；p ::= 非空完整图片指令；
+        契约：p ::= 非空完整图片指令；
         r ::= "current" | "genimg:" + 16 位十六进制；R ::= [] | [r1,...,rk]；1 <= n <= 15；
-        generate(t,p,R,n,a) -> G，其中 G ::= [genimg:...,...]。
-        顺序恒为：consume(t) -> send(A) -> call_image_API -> store_original -> return(G,preview)。
-        t 在调用开始时即消费，失败后重试必须重新 prepare；G/preview != 已发送到 QQ。
-        count 只表达用户所需张数；插件每个候选模型最多调用一次，不循环补画。
+        generate(p,R,n,a) -> G，其中 G ::= [genimg:...,...]。
+        工具调用会立即执行真实图片 API，请只在当前推理确实需要生成/编辑图片时调用。
+        返回的 G 与内部 preview 供当前 AI 继续判断；它们不代表图片已经发送到聊天。
+        count 只表达需要的图片数量；插件每个候选模型最多调用一次，不循环补画。
         当前候选零结果且属于额度/限流错误时才尝试下一模型；任何成功结果都会保留并停止降级。
 
         Args:
             prompt(string): p；完整画面描述或编辑指令。
-            refs(list[string]): R；仅接受 current 或本插件 genimg 提取码。
-            count(number): n；用户要求的图片数量，范围 1..15（API 参数边界，不是插件配额）。
+            refs(list[string]): R；可选，仅接受 current 或本插件 genimg 提取码。
+            count(number): n；需要的图片数量，范围 1..15（API 参数边界，不是插件配额）。
             aspect(string): a；landscape/portrait/square/photo/wide 或 W:H。
-            image_task_handle(string): t；上一步 prepare 返回的原值。
         """
-        prepared, error = lifecycle.consume(event, image_task_handle)
-        if error:
-            return _error_result(error)
         prompt_text = str(prompt or "").strip()
         if not prompt_text:
-            return _error_result("prompt 不能为空；当前准备句柄已经消费，请重新准备后再试。")
+            return _error_result("prompt 不能为空。")
         try:
             image_count = int(count)
         except (TypeError, ValueError):
-            return _error_result("count 必须是整数；当前准备句柄已经消费。")
+            return _error_result("count 必须是整数。")
         if image_count < 1 or image_count > 15:
-            return _error_result("count 必须在 1 到 15 之间；当前准备句柄已经消费。")
+            return _error_result("count 必须在 1 到 15 之间。")
 
         try:
             reference_urls, reference_manifest = await self._resolve_references(
                 event, _normalize_refs(refs)
             )
         except Exception as exc:
-            return _error_result(f"参考图解析失败：{str(exc)[:300]}；当前准备句柄已经消费。")
+            return _error_result(f"参考图解析失败：{str(exc)[:300]}")
         if refs and not reference_urls:
-            return _error_result("没有任何参考图可用；当前准备句柄已经消费。")
+            return _error_result("没有任何参考图可用。")
 
         try:
             size = aspect_to_size(aspect, self.config)
-            self.client.preflight(
-                prompt_text, size, reference_urls, image_count
-            )
+            self.client.preflight(prompt_text, size, reference_urls, image_count)
             await self._maybe_prune()
-            await event.send(MessageChain().message(str(prepared["announcement"])))
             urls, api_calls, model, used_plan = await self.client.generate(
                 prompt_text, size, reference_urls, image_count
             )
@@ -214,7 +171,11 @@ class IndependentImageGeneration(star.Star):
             "returned_count": len(rows),
             "used_plan": used_plan,
             "references": reference_manifest,
-            "next": "需要发送时调用 send_generated_images，并原样填写 genimg 提取码。",
+            "available_actions": {
+                "deliver_original": "调用 send_generated_images 并传入 genimg 提取码",
+                "continue_editing": "再次调用 generate_image，并把 genimg 提取码放入 refs",
+                "finish_without_delivery": "如果当前任务只需要内部结果或无需发送，可直接继续回答",
+            },
         }
         content: list[TextContent | ImageContent] = [
             TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
@@ -237,11 +198,12 @@ class IndependentImageGeneration(star.Star):
         event: AstrMessageEvent,
         refs: list[str] | None = None,
     ) -> CallToolResult:
-        """把本插件 genimg 提取码对应的原图作为文件发送到当前聊天；本工具会产生真实发送。
+        """把本插件 genimg 提取码对应的原图作为文件发送到当前聊天；可在任何模型步骤直接调用。
 
         契约：g ::= "genimg:" + 16 位十六进制；G ::= [g1,...,gn]，n >= 1；
         send(G) -> {delivery:"original_file", sent, results}。
         输入顺序=发送顺序；g 不属于外部插件提取码域、当前消息临时 ID、QQ file_id 或 "current"。
+        本工具只发送已经存在的生成物，不要求之前执行固定生命周期。
 
         Args:
             refs(list[string]): G；按发送顺序填写本插件 genimg 提取码。
@@ -277,7 +239,7 @@ class IndependentImageGeneration(star.Star):
 
     @filter.llm_tool(name="list_image_capabilities")
     async def list_image_capabilities(self, event: AstrMessageEvent) -> str:
-        """读取能力状态 C={models,aspects,references,delivery}；只读，不生成也不发送。"""
+        """只读查询图片能力；可在任何模型步骤调用，不是生成前置条件。"""
         return json.dumps(
             {
                 "plugin": PLUGIN_NAME,
@@ -287,7 +249,8 @@ class IndependentImageGeneration(star.Star):
                 "references": ["current", "genimg:<16hex>"],
                 "reference_limits": {"max_images": 14, "max_bytes_each": MAX_REFERENCE_BYTES},
                 "output_count": {"minimum": 1, "maximum": 15},
-                "skill_ids": skills.catalog_ids(),
+                "native_skill": "image-generation",
+                "tool_policy": "direct_call_anytime",
                 "delivery": "original_file",
                 "independent_of": [
                     "astrbot_plugin_yangmo_core",
@@ -367,6 +330,7 @@ class IndependentImageGeneration(star.Star):
     async def _preview(self, path: Path) -> tuple[bytes | None, str]:
         ffmpeg = str(self.config.get("ffmpeg_bin") or "").strip()
         if ffmpeg:
+            process = None
             try:
                 process = await asyncio.create_subprocess_exec(
                     ffmpeg,
@@ -385,6 +349,11 @@ class IndependentImageGeneration(star.Star):
                 stdout, _ = await asyncio.wait_for(process.communicate(), timeout=30)
                 if process.returncode == 0 and stdout:
                     return stdout, "image/jpeg"
+            except asyncio.TimeoutError:
+                if process is not None and process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                logger.warning("[yangmo.image] preview timed out")
             except Exception as exc:
                 logger.warning("[yangmo.image] preview unavailable: %s", exc)
         return None, "image/jpeg"
