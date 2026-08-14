@@ -2,6 +2,30 @@
 
 本项目采用语义化版本。
 
+## [0.3.0] - 2026-08-15
+
+### Added
+
+- 新增 `generate_video`：使用 `doubao-seedance-1-0-pro-250528`，支持文生视频与单首帧图生视频。
+- 新增 `send_generated_videos`，用于补发、重发或延迟交付 `genvideo:` 视频。
+- 新增 `video-generation` 原生 Skill，按 Seedance 的动作、时间顺序、运镜和连续性方式组织提示词。
+- 新增 `genvideo:` 私有视频存储与 `genframe:` 尾帧存储；尾帧可直接作为下一段视频首帧。
+- 新增方舟视频异步任务客户端：创建任务、轮询 queued/running、读取成功/失败状态、下载 MP4 与可选尾帧。
+- 新增 `list_generation_capabilities`，统一暴露图片/视频能力和互操作语义。
+
+### Interop
+
+- 新增松耦合 Tool 图片桥：观察当前事件中其他工具返回的公开 `ImageContent`，保存为仅当前事件有效的临时图片；`generate_video(first_frame="resolved")` 可把最近解析出的图片作为首帧。
+- 不 import 图片定位/搜索插件，不读取其他插件数据库，也不解析其私有提取码；与 `ctximg:` 等能力协作时，由 AstrBot Agent 先调用对应公开解析工具，再使用 `resolved`。
+- 单独安装时仍完整支持文生视频、当前消息首帧、`genimg:` 和 `genframe:`；联合安装不会共享持久状态或抢占其他插件工具名。
+
+### Changed
+
+- 插件展示名升级为“AI 图片与视频生成及原图交付”。
+- 图片与视频均保持 harness 语义：默认即时短通知、默认自动交付，但 Agent 可通过 `announce=false` / `auto_send=false` 关闭机械默认。
+- API Key 默认复用 `ark_api_key`；可选单独配置 `video_api_key`。
+- v0.3.0 暂不暴露 Seedance 1.0 Pro 的双首尾帧约束，避免在官方资料口径不一致时伪造稳定能力。
+
 ## [0.2.3] - 2026-08-15
 
 ### Changed
@@ -9,20 +33,15 @@
 - `generate_image` 新增 `announce` 参数，默认 `true`：完成最基本的参数检查后立即发送简短开始通知，再进入参考图解析和图片 API 请求，减少长耗时生图期间的冷等待。
 - 默认预告由 harness 执行，不要求 AstrBot Agent 先生成固定话术；如果 Agent 已经自行预告，或用户明确要求只发图片/不要文字，可设 `announce=false`。
 - 预告发送失败不会阻断图片生成，仍继续执行后续 API、存储和交付逻辑。
-- `list_image_capabilities` 增加默认交互反馈语义，明确短预告是可关闭的 UX 默认值而非强制工作流。
-- 原生 Skill 和 README 增加普通快速路径、纯图片路径和多轮 Agentic 路径中的预告去重指导；插件仍不建立额外状态机。
 
 ## [0.2.2] - 2026-08-15
 
 ### Changed
 
-- 明确插件定位为 AstrBot 主 Agent 的轻量图片 harness：Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用。
-- `generate_image` 保持默认 `auto_send=true`，但把 `auto_send=false` 明确定义为“把交付时机留给 Agent”，用于候选比较、内部检查、继续编辑和择优交付。
-- 精简 `generate_image` 的工具回执，移除每次生成都重复返回的 `agent_freedom` 和 `available_actions` 说明，只保留生成、模型、调用、参考图和真实交付状态，减少上下文噪声和工具选择偏置。
-- Tool 描述改为短而明确的动作语义，并明确每次生成会产生真实外部 API 请求和潜在费用。
-- `list_image_capabilities` 增加 prompt 指导：当前没有可靠的模型级硬上限，不按假定上限百分比机械填充，优先高语义密度的自然语言约束。
-- 原生 Skill 增加上下文自适应策略：速度优先时可直接生成；需要比较/择优时用 `auto_send=false`；尝试次数等预算由 AstrBot Agent 按当前任务自行遵守，不固化为插件模式。
-- README 增加快速路径与 Agentic 路径示例，并同步默认自动交付语义。
+- 明确插件定位为 AstrBot 主 Agent 的轻量图片 harness。
+- `generate_image` 保持默认 `auto_send=true`，`auto_send=false` 用于候选比较、内部检查、继续编辑和择优交付。
+- 精简工具回执，只保留事实状态，减少上下文噪声。
+- 原生 Skill 增加上下文自适应策略。
 
 ## [0.2.1] - 2026-08-15
 
@@ -30,19 +49,15 @@
 
 - `generate_image` 新增 `auto_send`，默认 `true`；成功生成后自动把原文件发送到当前聊天。
 - 保留 `auto_send=false`，允许主 Agent 先观察、比较、继续编辑或稍后择优交付。
-- `send_generated_images` 从固定生命周期步骤降级为补发、重发和延迟交付基础设施。
-- 生成结果仍返回 `genimg:` 与内部预览，自动发图不会终止 AstrBot 的后续 Agent loop。
+- `send_generated_images` 降级为补发、重发和延迟交付基础设施。
 
 ## [0.2.0] - 2026-08-15
 
 ### Changed
 
-- 改为完全使用 AstrBot 原生 Skill 渐进披露：初始只暴露 Skill 名称与描述，命中后读取 `SKILL.md`，再按需读取少量 `references/*.md`。
+- 改为完全使用 AstrBot 原生 Skill 渐进披露。
 - `generate_image` 改为可直接调用，不再要求 `prepare_image_generation` 或 `image_task_handle`。
-- `send_generated_images` 与 `list_image_capabilities` 同样不受固定生命周期约束，可由主 Agent 在任意合适步骤调用。
-- 删除“先准备、再消费一次性句柄”的硬性状态机；Skill 只负责工作方法，不再充当权限门。
-- 生成结果返回可选后续动作，不强迫 AI 必须发送、重画或继续某个固定步骤。
-- 内部预览超时会显式终止 ffmpeg 子进程。
+- 删除“先准备、再消费一次性句柄”的硬性状态机。
 
 ### Removed
 
@@ -51,28 +66,15 @@
 - 自定义 `skills.py + knowledge/manifest.json` 动态知识注入层。
 - 旧 `image-intent-router` Skill。
 
-### Migration
-
-- v0.1.x 调用方应移除 `prepare_image_generation` 与 `image_task_handle`，直接调用 `generate_image(prompt, refs, count, aspect)`。
-- 原有 `genimg:` 存储、参考图解析、内部预览、原图发送和模型降级机制保持不变。
-
 ## [0.1.0] - 2026-08-07
 
 ### Added
 
-- 加入 256×256 商场图标与 QQ 交流群 916646029。
-- 提供准备、生成、预览和原图交付的完整图片任务生命周期。
+- 加入商场图标与 QQ 交流群 916646029。
+- 提供图片生成、预览和原图交付能力。
 - 支持当前消息图片与本插件 `genimg:` 生成物作为参考图。
-- 内置总创作知识、按需作品技能、方舟普通接口与套餐接口兜底。
 
 ### Security
 
 - API Key 默认值为空，工具回执和日志不输出密钥。
 - 生成物按会话作用域隔离，并受保留时间和空间上限约束。
-
-### Changed
-
-- 完成商场元数据、用户说明、配置提示、计费边界与发布契约。
-- 统一为唯一的准备、生成、预览、原图交付生命周期，移除直接生成并发送的命令旁路。
-- 每个候选模型只请求一次；保留部分成功结果，不再循环补图或丢弃后整批重画。
-- 增加官方尺寸、比例、参考图数量和单图大小边界，并让失败回执报告 `api_calls`。
