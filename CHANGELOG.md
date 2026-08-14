@@ -2,6 +2,27 @@
 
 本项目采用语义化版本。
 
+## [0.2.2] - 2026-08-15
+
+### Changed
+
+- 明确插件定位为 AstrBot 主 Agent 的轻量图片 harness：Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用。
+- `generate_image` 保持默认 `auto_send=true`，但把 `auto_send=false` 明确定义为“把交付时机留给 Agent”，用于候选比较、内部检查、继续编辑和择优交付。
+- 精简 `generate_image` 的工具回执，移除每次生成都重复返回的 `agent_freedom` 和 `available_actions` 说明，只保留生成、模型、调用、参考图和真实交付状态，减少上下文噪声和工具选择偏置。
+- Tool 描述改为短而明确的动作语义，并明确每次生成会产生真实外部 API 请求和潜在费用。
+- `list_image_capabilities` 增加 prompt 指导：当前没有可靠的模型级硬上限，不按假定上限百分比机械填充，优先高语义密度的自然语言约束。
+- 原生 Skill 增加上下文自适应策略：速度优先时可直接生成；需要比较/择优时用 `auto_send=false`；尝试次数等预算由 AstrBot Agent 按当前任务自行遵守，不固化为插件模式。
+- README 增加快速路径与 Agentic 路径示例，并同步默认自动交付语义。
+
+## [0.2.1] - 2026-08-15
+
+### Changed
+
+- `generate_image` 新增 `auto_send`，默认 `true`；成功生成后自动把原文件发送到当前聊天。
+- 保留 `auto_send=false`，允许主 Agent 先观察、比较、继续编辑或稍后择优交付。
+- `send_generated_images` 从固定生命周期步骤降级为补发、重发和延迟交付基础设施。
+- 生成结果仍返回 `genimg:` 与内部预览，自动发图不会终止 AstrBot 的后续 Agent loop。
+
 ## [0.2.0] - 2026-08-15
 
 ### Changed
