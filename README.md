@@ -1,18 +1,19 @@
 # AI 图片生成与原图交付
 
-给 AstrBot 主 Agent 增加一层轻量图片 harness：图片 Skill 使用 AstrBot 原生渐进披露，图片 Tool 始终可直接调用；生成默认自动交付原图，但 Agent 可以按上下文延迟交付、比较候选、继续编辑、穿插语言或调用其他工具。
+给 AstrBot 主 Agent 增加一层轻量图片 harness：图片 Skill 使用 AstrBot 原生渐进披露，图片 Tool 始终可直接调用；默认先立即发一条很短的开始通知，再执行图片生成并自动交付原图。Agent 仍可按上下文关闭预告、延迟交付、比较候选、继续编辑、穿插语言或调用其他工具。
 
 交流与反馈：**QQ 群 916646029**
 
 ## 设计原则
 
-本插件不再自建第二套 Agent 工作流。
+本插件不自建第二套 Agent 工作流。
 
 ```text
 AstrBot Agent
   ├─ 自己决定：是否说话、检索、分析、调用其他工具
   ├─ 自己决定：现在要不要生成图片
   ├─ 自己决定：快速直出还是先比较/迭代
+  ├─ 自己决定：是否关闭默认短预告
   └─ 自己决定：是否延迟交付
 
 Image Skill
@@ -20,7 +21,9 @@ Image Skill
 
 Image Harness
   ├─ generate_image
+  ├─ 默认立即短预告
   ├─ 默认自动交付
+  ├─ announce=false 可静默生成
   ├─ auto_send=false 可延迟交付
   ├─ genimg: 稳定引用
   └─ preview 回到同一个 Agent loop
@@ -28,9 +31,9 @@ Image Harness
 
 核心边界是：
 
-**Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用。**
+**Agent 决定行为，Skill 提供经验，Tool 提供能力，Harness 承担机械副作用和等待期反馈。**
 
-插件不要求固定预告、固定总结、固定工具顺序或最终文本。
+默认短预告不是固定工作流：如果 Agent 已经自己说过“我开始做了”，或者用户明确要求只发图片、不发文字，调用时把 `announce=false` 即可。
 
 ## AstrBot 原生 Skill 两阶段
 
@@ -59,11 +62,16 @@ refs: [] | ["current", "genimg:..."]
 count: 1..15
 aspect: landscape / portrait / square / photo / wide / W:H
 auto_send: true | false，默认 true
+announce: true | false，默认 true
 ```
 
-默认 `auto_send=true`：生成成功后插件立即发送原文件，同时把 `genimg:` 与内部预览返回给当前 Agent。这样普通生图不需要模型再做一次机械发送调用。
+默认 `announce=true`：工具完成最基本的参数检查后立即向当前聊天发送一条简短开始通知，然后才进入参考图解析和图片 API 请求。这样即使生成耗时较长，用户也会立刻知道任务已经开始。
 
-如果任务需要先比较候选、内部检查、继续编辑、择优交付或“先别发”，Agent 可以直接传 `auto_send=false`。这不是另一套生命周期，只是把交付时机留给 Agent。
+默认 `auto_send=true`：生成成功后插件立即发送原文件，同时把 `genimg:` 与内部预览返回给当前 Agent。普通生图不需要模型再做一次机械发送调用。
+
+如果 Agent 调用工具前已经自己预告，或者用户明确要求“只发图 / 不要文字”，使用 `announce=false`。如果任务需要先比较候选、内部检查、继续编辑、择优交付或“先别发”，使用 `auto_send=false`。
+
+预告发送失败不会阻断图片生成；图片生成、交付和后续 Agent loop 仍按正常路径继续。
 
 每次 `generate_image` 都会执行真实外部图片 API，并可能产生费用。
 
@@ -80,7 +88,7 @@ auto_send: true | false，默认 true
 
 ### `list_image_capabilities`
 
-只读能力查询。用于确认模型、画幅、参考图边界、输出数量、交付策略或 prompt 指导；不是生成前置步骤。
+只读能力查询。用于确认模型、画幅、参考图边界、输出数量、默认短预告、交付策略或 prompt 指导；不是生成前置步骤。
 
 ## 上下文自适应，而不是模式枚举
 
@@ -98,9 +106,10 @@ auto_send: true | false，默认 true
 
 ```text
 Agent
-  → 不做无价值预告/查询
-  → generate_image(..., auto_send=true)
+  → 不做无价值查询
+  → generate_image(..., announce=true, auto_send=true)
 Harness
+  → 立刻发短通知
   → 调 API
   → 保存
   → 自动发原图
@@ -109,7 +118,19 @@ Agent
   → 可直接结束
 ```
 
-用户最终可以只看到图片。
+用户不会在图片生成期间面对长时间无反馈。
+
+如果用户明确说：
+
+```text
+只发图片，不要任何文字。
+```
+
+则 Agent 可以直接：
+
+```text
+generate_image(..., announce=false, auto_send=true)
+```
 
 ### Agentic 路径
 
@@ -122,23 +143,23 @@ Agent
 理想行为：
 
 ```text
-Agent 预告（因为用户要求）
+Agent 自己先预告
   → 读取必要 Skill/reference
-  → generate_image(auto_send=false)
+  → generate_image(announce=false, auto_send=false)
   → 看 preview
-  → 必要时继续第 2/3 次
+  → 必要时继续第 2/3 次，后续可继续 announce=false
   → 选 best genimg
   → send_generated_images(best)
   → 根据 preview 继续锐评
 ```
 
-“最多三次”属于本次任务预算，由 AstrBot Agent 自己遵守；插件不会把它固化为全局重试规则。
+“最多三次”属于本次任务预算，由 AstrBot Agent 自己遵守；插件不会把它固化为全局重试规则。默认短预告也不是要求每一轮候选都重复发送，Agent 可以按上下文关闭它，避免刷屏。
 
 ## Prompt 策略
 
 插件不把“提示词越长越好”当成默认假设。
 
-当前方舟公开资料更强调连贯自然语言、明确主体/行为/环境/用途和美学约束；部分 Seedream 指南还明确提醒，提示词过长可能让信息分散。因此本插件采用：
+当前采用：
 
 ```text
 高语义密度 > 机械堆字数
@@ -152,9 +173,7 @@ Agent 预告（因为用户要求）
 
 **积极自由：** Agent 可以自由组合语言、图片、检索、分析和其他工具；可以连续编辑，也可以先内部比较再交付。
 
-**消极自由：** 插件不强迫 Agent 预告、总结、固定顺序、最终文本、固定尝试次数，也不要求 Skill 激活以后才能调用图片工具。
-
-默认自动发图只是 harness 默认副作用：当 Agent 已经决定生成时，插件替它完成最常见的机械交付。
+**消极自由：** 插件不强迫 Agent 自己写预告、总结、固定顺序、最终文本、固定尝试次数，也不要求 Skill 激活以后才能调用图片工具。默认短预告和默认自动发图都可以由调用参数关闭，它们只是 harness 的 UX 默认值。
 
 ## 原生 Skill 资料
 
@@ -238,7 +257,8 @@ https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation
 - 参考图会按图片 API 要求提交给配置的服务商；
 - 内部预览会作为工具结果提供给当前主模型；如果主模型是云服务，预览可能发送给该模型提供商；
 - 原图保存在 AstrBot 插件数据目录；
-- `generate_image` 默认会自动把成功产物作为原文件发送到当前聊天；
+- `generate_image` 默认先发送短通知，再自动把成功产物作为原文件发送到当前聊天；
+- `announce=false` 时不会发送默认短通知；
 - `auto_send=false` 时只保存并返回内部预览/引用，不自动交付；
 - 本插件不修改 AstrBot 人格、主对话历史或其他插件配置。
 
