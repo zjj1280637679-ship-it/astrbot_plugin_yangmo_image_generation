@@ -26,10 +26,11 @@ from .api import (
 from .store import GeneratedImage, GeneratedImageStore
 
 PLUGIN_NAME = "astrbot_plugin_yangmo_image_generation"
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 MAX_REFERENCE_IMAGES = 14
 MAX_REFERENCE_BYTES = 30 * 1024 * 1024
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+DEFAULT_GENERATION_ANNOUNCEMENT = "收到，我开始处理图片，生成好就发给你。"
 
 
 def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
@@ -78,10 +79,13 @@ class IndependentImageGeneration(star.Star):
         count: int = 1,
         aspect: str = "landscape",
         auto_send: bool = True,
+        announce: bool = True,
     ) -> CallToolResult:
-        """生成、编辑或合成图片；默认生成成功后自动发送原文件。
+        """生成、编辑或合成图片；默认先立即发一条简短开始通知，再执行生成，成功后自动发送原文件。
 
         这是可在任意 Agent 步骤直接调用的动作工具，没有 prepare、句柄或固定前后流程。
+        `announce=true` 是低延迟 UX 默认值：工具一开始就告诉用户任务已接收，避免图片 API 等待期间没有反馈。
+        如果 Agent 已经在调用前发过明确的开始通知，或用户明确要求只发图片/不要文字，可设 `announce=false` 避免重复。
         `auto_send=true` 省去一次机械发送步骤；当任务需要先比较候选、继续编辑、内部检查或择优交付时设为 false。
         无论是否自动发送，都会返回 `genimg:` 稳定引用和内部预览，供当前 Agent 后续继续推理或调用其他工具。
         每次调用都会执行真实外部图片 API，并可能产生费用；不要只为讨论、分析或规划图片而调用。
@@ -92,6 +96,7 @@ class IndependentImageGeneration(star.Star):
             count(number): 需要的图片数量，1..15（API 参数边界，不是插件配额）。
             aspect(string): landscape/portrait/square/photo/wide 或 W:H。
             auto_send(boolean): 默认 true；false 表示把交付时机留给 Agent。
+            announce(boolean): 默认 true；立即发送简短开始通知。若 Agent 已自行预告或用户要求纯图片则设 false。
         """
         prompt_text = str(prompt or "").strip()
         if not prompt_text:
@@ -102,6 +107,15 @@ class IndependentImageGeneration(star.Star):
             return _error_result("count 必须是整数。")
         if image_count < 1 or image_count > 15:
             return _error_result("count 必须在 1 到 15 之间。")
+
+        if bool(announce):
+            try:
+                await event.send(MessageChain().message(DEFAULT_GENERATION_ANNOUNCEMENT))
+            except Exception:
+                logger.warning(
+                    "[yangmo.image] generation announcement failed; generation continues",
+                    exc_info=True,
+                )
 
         try:
             reference_urls, reference_manifest = await self._resolve_references(
@@ -177,6 +191,7 @@ class IndependentImageGeneration(star.Star):
             "used_plan": used_plan,
             "references": reference_manifest,
             "delivery": delivery,
+            "announcement": "sent" if bool(announce) else "suppressed",
         }
         content: list[TextContent | ImageContent] = [
             TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
@@ -244,6 +259,11 @@ class IndependentImageGeneration(star.Star):
                 "output_count": {"minimum": 1, "maximum": 15},
                 "native_skill": "image-generation",
                 "tool_policy": "direct_call_anytime",
+                "interaction": {
+                    "default_preamble": "automatic_short_notice",
+                    "suppress_parameter": "announce=false",
+                    "preamble_failure_blocks_generation": False,
+                },
                 "delivery": {
                     "default": "automatic_original_file",
                     "defer_parameter": "auto_send=false",
@@ -256,6 +276,7 @@ class IndependentImageGeneration(star.Star):
                     "note": "当前插件没有可靠的模型级硬提示词上限；优先表达有效约束，不按假定上限机械填充。",
                 },
                 "agent_harness": {
+                    "default_preamble": True,
                     "forced_preamble": False,
                     "forced_followup": False,
                     "forced_tool_order": False,
