@@ -1,8 +1,8 @@
 name: astrbot_plugin_yangmo_image_generation
 display_name: "AI 图片生成与原图交付"
-desc: "给 AstrBot 主 Agent 增加轻量图片 harness：原生 Skill 渐进披露，图片工具可随时调用，默认自动交付原图，也支持延迟交付、候选比较与继续编辑。"
-short_desc: "原生 Skill + Agent 自适应 + 默认自动发图。"
-version: "0.2.2"
+desc: "给 AstrBot 主 Agent 增加轻量图片 harness：原生 Skill 渐进披露，默认先即时预告再生成并自动交付，也支持静默生成、延迟交付、候选比较与继续编辑。"
+short_desc: "原生 Skill + 即时预告 + Agent 自适应 + 默认自动发图。"
+version: "0.2.3"
 astrbot_version: ">=4.26.1"
 author: "羊膜大人"
 repo: "https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation"
