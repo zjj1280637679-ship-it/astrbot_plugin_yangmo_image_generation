@@ -1,9 +1,9 @@
 {
   "ark_api_key": {
-    "description": "火山方舟图片 API Key",
+    "description": "火山方舟图片/视频 API Key",
     "type": "string",
     "default": "",
-    "hint": "敏感信息。只由本插件读取；不会写入回执、日志或发布包。",
+    "hint": "敏感信息。图片与视频默认共用；不会写入回执、日志或发布包。",
     "obvious_hint": true
   },
   "ark_base_url": {
@@ -22,22 +22,56 @@
     "hint": "固定从高到低；仅额度或限流错误才尝试下一项。"
   },
   "image_model": {
-    "description": "模型列表为空时的兜底模型",
+    "description": "图片模型列表为空时的兜底模型",
     "type": "string",
     "default": "doubao-seedream-5-0-pro-260628"
   },
   "image_size": {
-    "description": "无法识别画幅时的兜底尺寸",
+    "description": "无法识别画幅时的兜底图片尺寸",
     "type": "string",
     "default": "5461x3072"
   },
+  "video_model": {
+    "description": "Seedance 视频模型",
+    "type": "string",
+    "default": "doubao-seedance-1-0-pro-250528",
+    "hint": "默认使用 Seedance 1.0 Pro 250528；支持文生视频与单首帧图生视频。"
+  },
+  "video_base_url": {
+    "description": "方舟视频生成 API 基础地址",
+    "type": "string",
+    "default": "https://ark.cn-beijing.volces.com/api/v3"
+  },
+  "video_api_key": {
+    "description": "视频 API Key（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "留空时自动复用 ark_api_key。",
+    "obvious_hint": true
+  },
+  "video_poll_interval_seconds": {
+    "description": "视频任务轮询间隔（秒）",
+    "type": "int",
+    "default": 4
+  },
+  "video_timeout_seconds": {
+    "description": "单个视频任务最长等待时间（秒）",
+    "type": "int",
+    "default": 600,
+    "hint": "超时只停止本次等待，不代表服务端任务一定已停止。"
+  },
+  "max_video_download_mb": {
+    "description": "单个生成视频最大下载大小（MiB）",
+    "type": "int",
+    "default": 256
+  },
   "ark_plan_fallback": {
-    "description": "普通接口额度不足时使用套餐接口",
+    "description": "普通图片接口额度不足时使用套餐接口",
     "type": "bool",
     "default": true
   },
   "ark_plan_base_url": {
-    "description": "方舟套餐接口地址",
+    "description": "方舟套餐图片接口地址",
     "type": "string",
     "default": "https://ark.cn-beijing.volces.com/api/plan/v3"
   },
@@ -45,7 +79,7 @@
     "description": "套餐专属 API Key",
     "type": "string",
     "default": "",
-    "hint": "敏感信息。留空时复用普通接口密钥；不要提交到 GitHub。",
+    "hint": "敏感信息。留空时复用普通接口密钥。",
     "obvious_hint": true
   },
   "ark_plan_image_model": {
@@ -54,20 +88,24 @@
     "default": "doubao-seedream-5.0-lite"
   },
   "ffmpeg_bin": {
-    "description": "制作 AI 内部预览图的 ffmpeg 路径",
+    "description": "制作 AI 内部图片/视频预览的 ffmpeg 路径",
     "type": "string",
     "default": "ffmpeg",
-    "hint": "失败只影响缩略预览，不影响原图落库和发送。"
+    "hint": "失败只影响内部预览，不影响原始生成物落库和发送。"
   },
   "generated_ttl_days": {
-    "description": "生成图片保留天数",
+    "description": "生成图片/视频保留天数",
     "type": "int",
     "default": 30
   },
   "max_store_bytes": {
-    "description": "本插件生成物存储上限",
+    "description": "本插件生成图片存储上限",
     "type": "int",
-    "default": 2147483648,
-    "hint": "只管理本插件自己的文件；按最近使用时间清理。"
+    "default": 2147483648
+  },
+  "max_video_store_bytes": {
+    "description": "本插件视频与尾帧存储上限",
+    "type": "int",
+    "default": 8589934592
   }
 }
