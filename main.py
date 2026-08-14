@@ -26,7 +26,7 @@ from .api import (
 from .store import GeneratedImage, GeneratedImageStore
 
 PLUGIN_NAME = "astrbot_plugin_yangmo_image_generation"
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 MAX_REFERENCE_IMAGES = 14
 MAX_REFERENCE_BYTES = 30 * 1024 * 1024
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -79,25 +79,19 @@ class IndependentImageGeneration(star.Star):
         aspect: str = "landscape",
         auto_send: bool = True,
     ) -> CallToolResult:
-        """直接生成、编辑或合成图片；默认生成成功后立即把原文件发送到当前聊天。
+        """生成、编辑或合成图片；默认生成成功后自动发送原文件。
 
-        这是一个可在任意模型步骤调用的 Agent 工具，没有 prepare、句柄或强制前后流程。
-        模型可以在调用前后自由穿插自然语言、其他工具和继续推理；本工具只负责图片副作用。
-
-        契约：p ::= 非空完整图片指令；
-        r ::= "current" | "genimg:" + 16 位十六进制；R ::= [] | [r1,...,rk]；1 <= n <= 15；
-        generate(p,R,n,a,auto_send=true) -> G + preview + delivery。
-        auto_send=true 是默认 harness 行为：生成完成即交付原文件，不需要模型再调用发送工具。
-        如果当前 Agent 明确需要先观察、继续编辑、比较候选或暂不交付，可传 auto_send=false。
-        无论是否自动发送，都会返回 genimg: 引用和内部 preview，供当前 AI 后续继续使用。
-        工具调用会立即执行真实图片 API，请只在当前推理确实需要生成/编辑图片时调用。
+        这是可在任意 Agent 步骤直接调用的动作工具，没有 prepare、句柄或固定前后流程。
+        `auto_send=true` 省去一次机械发送步骤；当任务需要先比较候选、继续编辑、内部检查或择优交付时设为 false。
+        无论是否自动发送，都会返回 `genimg:` 稳定引用和内部预览，供当前 Agent 后续继续推理或调用其他工具。
+        每次调用都会执行真实外部图片 API，并可能产生费用；不要只为讨论、分析或规划图片而调用。
 
         Args:
-            prompt(string): p；完整画面描述或编辑指令。
-            refs(list[string]): R；可选，仅接受 current 或本插件 genimg 提取码。
-            count(number): n；需要的图片数量，范围 1..15（API 参数边界，不是插件配额）。
-            aspect(string): a；landscape/portrait/square/photo/wide 或 W:H。
-            auto_send(boolean): 是否在生成成功后自动发送原文件；默认 true。
+            prompt(string): 完整而有信息密度的图片指令；不要为追求长度机械填充无意义细节。
+            refs(list[string]): 可选；仅接受 current 或本插件 genimg: 提取码。
+            count(number): 需要的图片数量，1..15（API 参数边界，不是插件配额）。
+            aspect(string): landscape/portrait/square/photo/wide 或 W:H。
+            auto_send(boolean): 默认 true；false 表示把交付时机留给 Agent。
         """
         prompt_text = str(prompt or "").strip()
         if not prompt_text:
@@ -183,17 +177,6 @@ class IndependentImageGeneration(star.Star):
             "used_plan": used_plan,
             "references": reference_manifest,
             "delivery": delivery,
-            "agent_freedom": {
-                "language_before_or_after": True,
-                "other_tools_before_or_after": True,
-                "continue_reasoning_after_call": True,
-                "manual_redelivery_available": True,
-            },
-            "available_actions": {
-                "continue_editing": "再次调用 generate_image，并把 genimg 提取码放入 refs；如需先看结果再交付可设 auto_send=false",
-                "redeliver_original": "需要重发已有生成物时调用 send_generated_images",
-                "continue_agent": "可继续自然语言、其他 Agent 工具或直接结束当前回复",
-            },
         }
         content: list[TextContent | ImageContent] = [
             TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
@@ -216,10 +199,9 @@ class IndependentImageGeneration(star.Star):
         event: AstrMessageEvent,
         refs: list[str] | None = None,
     ) -> CallToolResult:
-        """重发或补发已有 genimg: 生成物的原文件；不是 generate_image 的必经下一步。
+        """发送或重发已有 genimg: 生成物的原文件。
 
-        generate_image 默认已经自动发送。本工具保留为 Agent 基础设施：
-        当 auto_send=false、自动发送部分失败、用户要求重发，或模型稍后决定交付历史生成物时可直接调用。
+        `generate_image` 默认已自动发送；本工具用于 `auto_send=false` 后择优交付、自动发送失败后的补发、用户要求重发，或稍后交付历史生成物。
 
         Args:
             refs(list[string]): 一个或多个本插件 genimg: 提取码，按发送顺序填写。
@@ -250,7 +232,7 @@ class IndependentImageGeneration(star.Star):
 
     @filter.llm_tool(name="list_image_capabilities")
     async def list_image_capabilities(self, event: AstrMessageEvent) -> str:
-        """只读查询图片能力；可在任何模型步骤调用，不是生成前置条件。"""
+        """只读查询图片能力；需要确认模型、边界或交付语义时调用。"""
         return json.dumps(
             {
                 "plugin": PLUGIN_NAME,
@@ -266,6 +248,12 @@ class IndependentImageGeneration(star.Star):
                     "default": "automatic_original_file",
                     "defer_parameter": "auto_send=false",
                     "manual_tool": "send_generated_images",
+                },
+                "prompt_guidance": {
+                    "hard_limit_known": False,
+                    "strategy": "concise_semantically_dense_natural_language",
+                    "do_not_pad_to_percentage": True,
+                    "note": "当前插件没有可靠的模型级硬提示词上限；优先表达有效约束，不按假定上限机械填充。",
                 },
                 "agent_harness": {
                     "forced_preamble": False,
