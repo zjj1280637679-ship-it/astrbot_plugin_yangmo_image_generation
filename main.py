@@ -26,7 +26,7 @@ from .api import (
 from .store import GeneratedImage, GeneratedImageStore
 
 PLUGIN_NAME = "astrbot_plugin_yangmo_image_generation"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 MAX_REFERENCE_IMAGES = 14
 MAX_REFERENCE_BYTES = 30 * 1024 * 1024
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
@@ -77,22 +77,27 @@ class IndependentImageGeneration(star.Star):
         refs: list[str] | None = None,
         count: int = 1,
         aspect: str = "landscape",
+        auto_send: bool = True,
     ) -> CallToolResult:
-        """直接生成、编辑或合成图片；任何模型步骤都可调用，无需 prepare 或任务句柄。
+        """直接生成、编辑或合成图片；默认生成成功后立即把原文件发送到当前聊天。
+
+        这是一个可在任意模型步骤调用的 Agent 工具，没有 prepare、句柄或强制前后流程。
+        模型可以在调用前后自由穿插自然语言、其他工具和继续推理；本工具只负责图片副作用。
 
         契约：p ::= 非空完整图片指令；
         r ::= "current" | "genimg:" + 16 位十六进制；R ::= [] | [r1,...,rk]；1 <= n <= 15；
-        generate(p,R,n,a) -> G，其中 G ::= [genimg:...,...]。
+        generate(p,R,n,a,auto_send=true) -> G + preview + delivery。
+        auto_send=true 是默认 harness 行为：生成完成即交付原文件，不需要模型再调用发送工具。
+        如果当前 Agent 明确需要先观察、继续编辑、比较候选或暂不交付，可传 auto_send=false。
+        无论是否自动发送，都会返回 genimg: 引用和内部 preview，供当前 AI 后续继续使用。
         工具调用会立即执行真实图片 API，请只在当前推理确实需要生成/编辑图片时调用。
-        返回的 G 与内部 preview 供当前 AI 继续判断；它们不代表图片已经发送到聊天。
-        count 只表达需要的图片数量；插件每个候选模型最多调用一次，不循环补画。
-        当前候选零结果且属于额度/限流错误时才尝试下一模型；任何成功结果都会保留并停止降级。
 
         Args:
             prompt(string): p；完整画面描述或编辑指令。
             refs(list[string]): R；可选，仅接受 current 或本插件 genimg 提取码。
             count(number): n；需要的图片数量，范围 1..15（API 参数边界，不是插件配额）。
             aspect(string): a；landscape/portrait/square/photo/wide 或 W:H。
+            auto_send(boolean): 是否在生成成功后自动发送原文件；默认 true。
         """
         prompt_text = str(prompt or "").strip()
         if not prompt_text:
@@ -162,6 +167,12 @@ class IndependentImageGeneration(star.Star):
             }
             for image in generated
         ]
+
+        delivery = {"mode": "deferred", "sent": 0, "results": []}
+        if bool(auto_send):
+            delivery = await self._deliver_images(event, generated)
+            delivery["mode"] = "automatic"
+
         payload = {
             "status": "ok",
             "generated": rows,
@@ -171,10 +182,17 @@ class IndependentImageGeneration(star.Star):
             "returned_count": len(rows),
             "used_plan": used_plan,
             "references": reference_manifest,
+            "delivery": delivery,
+            "agent_freedom": {
+                "language_before_or_after": True,
+                "other_tools_before_or_after": True,
+                "continue_reasoning_after_call": True,
+                "manual_redelivery_available": True,
+            },
             "available_actions": {
-                "deliver_original": "调用 send_generated_images 并传入 genimg 提取码",
-                "continue_editing": "再次调用 generate_image，并把 genimg 提取码放入 refs",
-                "finish_without_delivery": "如果当前任务只需要内部结果或无需发送，可直接继续回答",
+                "continue_editing": "再次调用 generate_image，并把 genimg 提取码放入 refs；如需先看结果再交付可设 auto_send=false",
+                "redeliver_original": "需要重发已有生成物时调用 send_generated_images",
+                "continue_agent": "可继续自然语言、其他 Agent 工具或直接结束当前回复",
             },
         }
         content: list[TextContent | ImageContent] = [
@@ -198,43 +216,36 @@ class IndependentImageGeneration(star.Star):
         event: AstrMessageEvent,
         refs: list[str] | None = None,
     ) -> CallToolResult:
-        """把本插件 genimg 提取码对应的原图作为文件发送到当前聊天；可在任何模型步骤直接调用。
+        """重发或补发已有 genimg: 生成物的原文件；不是 generate_image 的必经下一步。
 
-        契约：g ::= "genimg:" + 16 位十六进制；G ::= [g1,...,gn]，n >= 1；
-        send(G) -> {delivery:"original_file", sent, results}。
-        输入顺序=发送顺序；g 不属于外部插件提取码域、当前消息临时 ID、QQ file_id 或 "current"。
-        本工具只发送已经存在的生成物，不要求之前执行固定生命周期。
+        generate_image 默认已经自动发送。本工具保留为 Agent 基础设施：
+        当 auto_send=false、自动发送部分失败、用户要求重发，或模型稍后决定交付历史生成物时可直接调用。
 
         Args:
-            refs(list[string]): G；按发送顺序填写本插件 genimg 提取码。
+            refs(list[string]): 一个或多个本插件 genimg: 提取码，按发送顺序填写。
         """
         normalized = _normalize_refs(refs)
         if not normalized:
             return _error_result("至少需要一个 genimg 提取码。")
         images = await asyncio.to_thread(self.store.resolve_many, _scope(event), normalized)
-        manifest = []
-        sent = 0
+        existing = [image for image in images if image is not None]
+        delivery = await self._deliver_images(event, existing)
+        existing_iter = iter(delivery["results"])
+        results = []
         for requested, image in zip(normalized, images, strict=True):
             if image is None:
-                manifest.append({"ref": requested, "status": "unavailable"})
-                continue
-            try:
-                message_id = await _send_original(event, image)
-            except Exception as exc:
-                logger.error("[yangmo.image] original send failed ref=%s", requested, exc_info=True)
-                manifest.append(
-                    {"ref": requested, "status": "send_failed", "error": str(exc)[:300]}
-                )
-                continue
-            sent += 1
-            manifest.append(
-                {"ref": requested, "status": "sent", "message_id": message_id}
-            )
-        payload = {"sent": sent, "delivery": "original_file", "results": manifest}
+                results.append({"ref": requested, "status": "unavailable"})
+            else:
+                results.append(next(existing_iter))
+        payload = {
+            "sent": delivery["sent"],
+            "delivery": "original_file",
+            "results": results,
+        }
         return CallToolResult(
             content=[TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
             structuredContent=payload,
-            isError=sent == 0,
+            isError=delivery["sent"] == 0,
         )
 
     @filter.llm_tool(name="list_image_capabilities")
@@ -251,7 +262,17 @@ class IndependentImageGeneration(star.Star):
                 "output_count": {"minimum": 1, "maximum": 15},
                 "native_skill": "image-generation",
                 "tool_policy": "direct_call_anytime",
-                "delivery": "original_file",
+                "delivery": {
+                    "default": "automatic_original_file",
+                    "defer_parameter": "auto_send=false",
+                    "manual_tool": "send_generated_images",
+                },
+                "agent_harness": {
+                    "forced_preamble": False,
+                    "forced_followup": False,
+                    "forced_tool_order": False,
+                    "forced_final_text": False,
+                },
                 "independent_of": [
                     "astrbot_plugin_yangmo_core",
                     "astrbot_plugin_yangmo_qq_search",
@@ -260,6 +281,28 @@ class IndependentImageGeneration(star.Star):
             },
             ensure_ascii=False,
         )
+
+    async def _deliver_images(
+        self,
+        event: AstrMessageEvent,
+        images: list[GeneratedImage],
+    ) -> dict:
+        manifest = []
+        sent = 0
+        for image in images:
+            try:
+                message_id = await _send_original(event, image)
+            except Exception as exc:
+                logger.error(
+                    "[yangmo.image] original send failed ref=%s", image.ref, exc_info=True
+                )
+                manifest.append(
+                    {"ref": image.ref, "status": "send_failed", "error": str(exc)[:300]}
+                )
+                continue
+            sent += 1
+            manifest.append({"ref": image.ref, "status": "sent", "message_id": message_id})
+        return {"sent": sent, "results": manifest}
 
     async def _resolve_references(self, event, refs: list[str]):
         scope = _scope(event)
