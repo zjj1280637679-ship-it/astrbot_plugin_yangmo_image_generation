@@ -84,15 +84,23 @@ class IndependentImageGeneration(star.Star):
         tool_args: dict | None,
         tool_result: CallToolResult | None,
     ) -> None:
-        """Loose interop: remember images returned by other tools for this event only.
+        """Remember public images returned by other tools for this event only.
 
-        This never imports or reads another plugin's storage. A locator/search plugin can return
-        ImageContent, then generate_video(first_frame="resolved") can consume that content.
+        This never imports another plugin or reads its storage. It deliberately ignores this
+        plugin's own generation/delivery tools, so `resolved` means an image obtained from an
+        external resolver/search/tool rather than our own preview.
         """
         if tool_result is None:
             return
         tool_name = str(getattr(tool, "name", "") or "")
-        if tool_name in {"generate_video", "send_generated_videos"}:
+        if tool_name in {
+            "generate_image",
+            "send_generated_images",
+            "generate_video",
+            "send_generated_videos",
+            "list_image_capabilities",
+            "list_generation_capabilities",
+        }:
             return
         cached: list[tuple[bytes, str]] = []
         for item in list(getattr(tool_result, "content", []) or []):
@@ -354,9 +362,18 @@ class IndependentImageGeneration(star.Star):
             "model": str(task.get("model") or self.video_client.model()),
             "api_calls": api_calls,
             "task_status": str(task.get("status") or "succeeded"),
-            "duration": task.get("duration", duration_value),
-            "ratio": task.get("ratio", ratio_value),
-            "resolution": task.get("resolution", resolution_value),
+            "requested": {
+                "duration": duration_value,
+                "ratio": ratio_value,
+                "resolution": resolution_value,
+            },
+            "actual": {
+                "duration": task.get("duration"),
+                "ratio": task.get("ratio"),
+                "resolution": task.get("resolution"),
+                "frames": task.get("frames"),
+                "frames_per_second": task.get("framespersecond") or task.get("frames_per_second"),
+            },
             "first_frame": frame_manifest,
             "delivery": delivery,
             "announcement": "sent" if bool(announce) else "suppressed",
@@ -430,7 +447,7 @@ class IndependentImageGeneration(star.Star):
                 },
                 "interop": {
                     "strategy": "public_tool_content_not_foreign_storage",
-                    "resolved": "最近一个工具返回的 ImageContent；适合先调用群聊图片定位/搜索工具，再做首帧图生视频。",
+                    "resolved": "最近一个外部工具返回的 ImageContent；适合先调用群聊图片定位/搜索工具，再做首帧图生视频。",
                     "imports_other_plugins": False,
                 },
                 "agent_harness": {
@@ -487,7 +504,7 @@ class IndependentImageGeneration(star.Star):
         sent = 0
         for video in videos:
             try:
-                component = Video.fromFileSystem(str(video.file_path))
+                component = Video.fromFileSystem(path=str(video.file_path))
                 await event.send(MessageChain(chain=[component]))
             except Exception as exc:
                 logger.error("[yangmo.video] send failed ref=%s", video.ref, exc_info=True)
