@@ -4,3 +4,8 @@
 # CogVideoX-Flash is the preferred route when configured; Seedance 1.0 Pro
 # remains the independent fallback route. Neither route requests audio.
 from . import video_order_patch as _video_order_patch  # noqa: F401
+
+# Extend only the private `current` image resolver: direct attachments remain
+# first, while an explicitly quoted/replied image gets a low-latency fast path
+# before the Agent needs to call an external ctximg/resolver tool.
+from . import quote_fastpath as _quote_fastpath  # noqa: F401
