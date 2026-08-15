@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: 当用户需要文生视频、把当前/引用/历史/已解析图片作为首帧生成视频、续接视频、比较候选视频或让静态画面动起来时使用。视频工具可直接调用，默认先通知并自动发送；本 Skill 只提供按需工作方法，不构成权限门。
+description: 当用户需要文生视频、把当前/引用/历史/已解析图片作为首帧生成视频、续接视频、比较候选视频或让静态画面动起来时使用。视频工具可直接调用，默认行为由插件设置提供；本 Skill 只提供按需工作方法，不构成权限门。
 ---
 
 # 视频生成
@@ -13,21 +13,38 @@ description: 当用户需要文生视频、把当前/引用/历史/已解析图�
 
 未配置智谱 Key 时，Seedance 1.0 Pro 仍可独立工作。
 
-当前插件稳定暴露：文生视频、单首帧图生视频、5/10 秒、多种画幅与分辨率请求；Seedance 路线可请求返回尾帧并保存为 `genframe:`；生成视频保存为 `genvideo:` 并默认自动发送。
+当前插件稳定暴露：文生视频、单首帧图生视频、5/10 秒、多种画幅与分辨率请求；Seedance 路线可请求返回尾帧并保存为 `genframe:`；生成视频保存为 `genvideo:`。
 
 当前两条路线都按无音频生成使用。不要为了本插件的视频任务额外设计声音提示词，也不要假设 Seedance 1.0 Pro 会生成原生音轨。
 
+## 可配置默认值
+
+当用户没有明确指定对应参数时，不要为了“补全参数”而机械写死数值；可以省略参数，让 harness 使用插件设置中的默认值。当前出厂默认是：
+
+- `duration=10` 秒；
+- `ratio=adaptive`；
+- `resolution=1080p`；
+- `return_last_frame=true`；
+- `auto_send=true`；
+- `announce=true`。
+
+这些默认值都可由管理员在插件设置中修改。用户或 Agent 在单次任务里显式传入的参数优先于插件默认值。
+
+`first_frame` 故意不做全局默认设置。文生视频时留空；只有任务语义明确需要图片首帧时才使用 `current`、`resolved`、`genimg:` 或 `genframe:`。这样不会因为上下文里碰巧存在图片而把普通文生视频悄悄变成图生视频。
+
+CogVideoX-Flash 的 `quality` 与 `fps` 仍由各自插件设置控制。
+
 ## Harness 语义
 
-`generate_video` 默认立即发送简短开始通知，程序负责异步任务轮询、下载、落库和自动交付，然后把 `genvideo:`、可用的 `genframe:`、任务信息和内部预览返回当前 Agent。
+`generate_video` 根据设置决定是否立即发送简短开始通知，程序负责异步任务轮询、下载、落库和默认交付，然后把 `genvideo:`、可用的 `genframe:`、任务信息和内部预览返回当前 Agent。
 
-Agent 可以自由关闭机械默认：`announce=false` 表示已经自己预告或用户要求纯结果；`auto_send=false` 表示先做候选、内部比较或继续迭代。不要建立 `prepare`、句柄或固定前后话术。
+Agent 可以自由覆盖机械默认：`announce=false` 表示已经自己预告或用户要求纯结果；`auto_send=false` 表示先做候选、内部比较或继续迭代。不要建立 `prepare`、句柄或固定前后话术。
 
 ## 首帧来源
 
 `first_frame` 支持空字符串（文生视频）、`current`、`genimg:...`、`genframe:...` 和 `resolved`。
 
-`current` 不只表示当前消息直接上传的图片：当用户明确回复/引用一张旧图时，插件会先检查 AstrBot `Reply.chain` 中是否已经带有原图；没有时再用 AstrBot 自带 quoted-message parser 做一次短超时的快速解析。因此“引用这张图做成 5 秒视频”应优先直接调用 `generate_video(first_frame="current")`，不需要默认先走历史图片搜索。
+`current` 不只表示当前消息直接上传的图片：当用户明确回复/引用一张旧图时，插件会先检查 AstrBot `Reply.chain` 中是否已经带有原图；没有时再用 AstrBot 自带 quoted-message parser 做一次短超时的快速解析。因此“引用这张图做成视频”应优先直接调用 `generate_video(first_frame="current")`，不需要默认先走历史图片搜索。
 
 如果引用快速路径失败或超时，再调用外部图片定位/搜索工具，把原图作为 ImageContent 返回给 Agent，然后使用 `resolved`。这个 fallback 仍然保留；本插件不导入其他插件，也不读取其他插件私有存储。
 
@@ -47,7 +64,7 @@ Agent 可以自由关闭机械默认：`announce=false` 表示已经自己预告
 
 ## Agent 自适应
 
-- “越快越好”：减少额外规划，直接生成；通常保持 `announce=true`、`auto_send=true`。
+- “越快越好”：减少额外规划，直接生成；参数未指定时沿用插件默认。
 - “先做三版，选最好”：第一次可预告；候选使用 `announce=false, auto_send=false`，由 Agent 根据预览和任务预算决定是否继续。
 - “先别发”：使用 `auto_send=false`。
 - “生成后锐评”：交付不会终止 Agent loop；利用返回预览继续评价即可。
