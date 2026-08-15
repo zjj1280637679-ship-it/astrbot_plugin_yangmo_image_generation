@@ -1,10 +1,9 @@
 {
   "ark_api_key": {"description":"火山方舟图片/视频 API Key","type":"string","default":"","hint":"敏感信息。图片与 Seedance 备用视频路线默认共用；不会写入回执、日志或发布包。","obvious_hint":true},
   "ark_base_url": {"description":"方舟普通接口地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/v3"},
-  "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；额度/限流时尝试下一项。开启“优先保持请求分辨率”后，无法满足目标尺寸的模型也会被零 API 调用跳过。"},
+  "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；额度/限流时尝试下一项。图片像素默认按画幅取插件允许的最大目标值；无法满足目标尺寸的模型会在零 API 调用下跳过，不会静默降清晰度。"},
   "image_model": {"description":"图片模型列表为空时的兜底模型","type":"string","default":"doubao-seedream-5-0-pro-260628"},
-  "image_size": {"description":"无法识别画幅时的兜底图片尺寸","type":"string","default":"5461x3072"},
-  "image_preserve_requested_resolution": {"description":"优先保持请求图片分辨率","type":"bool","default":true,"hint":"默认开启：模型轮换时，如果某模型会把目标尺寸自动缩小，就跳过该模型并尝试下一个能保持尺寸的模型，避免同一画幅一会高清一会低清。关闭后恢复旧逻辑：优先模型，即使需要按该模型上限自动降尺寸。"},
+  "image_size": {"description":"无法识别画幅时的最大兜底图片尺寸","type":"string","default":"5461x3072","hint":"普通任务不需要手动修改。只有用户明确要求特定像素尺寸时，才应改变像素目标。"},
   "quoted_image_fastpath_timeout_seconds": {"description":"引用图片快速解析最长等待（秒）","type":"int","default":3,"hint":"refs=current 或视频首帧=current 时：先读取 Reply.chain 内已附带图片；没有时才调用 AstrBot 自带引用消息解析器。超时或失败立即降级，不阻塞现有 Agent 图片定位/解析兜底。建议 1~5 秒。"},
   "zhipu_video_fallback_enabled": {"description":"启用 CogVideoX-Flash 视频主路线","type":"bool","default":true,"hint":"配置智谱 API Key 后优先使用 CogVideoX-Flash；若创建任务阶段明确遇到可轮换的限流、额度、过载或服务端错误，再尝试 Seedance 1.0 Pro。网络超时等结果未知场景不会重复提交。"},
   "zhipu_video_api_key": {"description":"智谱视频 API Key（默认视频路线）","type":"string","default":"","hint":"配置后 CogVideoX-Flash 成为默认视频模型；留空时仍可独立使用 Seedance 1.0 Pro。","obvious_hint":true},
