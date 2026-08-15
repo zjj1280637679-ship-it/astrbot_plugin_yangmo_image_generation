@@ -2,6 +2,19 @@
 
 本项目采用语义化版本。
 
+## [0.3.3] - 2026-08-15
+
+### Added
+
+- 新增视频默认参数设置：`video_default_duration`、`video_default_ratio`、`video_default_resolution`、`video_default_return_last_frame`、`video_default_auto_send`、`video_default_announce`。
+- 仅当 Agent 没有显式传对应参数时，harness 才把插件设置中的默认值注入 `generate_video`；单次任务明确指定值始终优先。
+
+### Changed
+
+- 视频出厂默认时长从 5 秒调整为 10 秒。
+- `first_frame` 继续保持任务驱动，不提供全局默认，避免上下文里碰巧存在图片时把普通文生视频静默改成图生视频。
+- CogVideoX-Flash 的 `quality` / `fps` 继续沿用原有独立设置。
+
 ## [0.3.2] - 2026-08-15
 
 ### Added
