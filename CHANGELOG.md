@@ -2,6 +2,29 @@
 
 本项目采用语义化版本。
 
+## [0.3.2] - 2026-08-15
+
+### Added
+
+- `refs=["current"]` 与 `generate_video(first_frame="current")` 新增 QQ 引用/回复图片快速路径。
+- 第一层直接读取 AstrBot `Reply.chain` 已附带的图片，不产生额外 OneBot 查询。
+- 若 `Reply.chain` 没有原图，则复用 AstrBot 4.27.3 自带 `extract_quoted_message_images`，通过官方 quoted-message parser / OneBot resolver 取回被引用图片。
+- 新增 `quoted_image_fastpath_timeout_seconds`，默认 3 秒；远程引用解析超时后立即降级，不阻断原有 Agent `ctximg → resolver → resolved` 兜底。
+
+### Changed
+
+- `current` 现在语义为“当前消息直接图片优先 + 明确引用图片作为低优先级补充”。直接上传图片仍保持第一顺位，避免引用图悄悄覆盖视频首帧。
+- 引用图片快速路径严格限制在剩余参考图预算内，不会因为消息额外带 Reply 而把原本合法的 14 张直接参考图请求推到超限失败。
+- 引用解析中的格式错误、OneBot 失败或超时均按 fail-soft 处理；不会调用图片理解模型，也不会让群聊图片描述模型的 400/contentFilter 阻断生图/视频主链。
+
+## [0.3.1] - 2026-08-15
+
+### Changed
+
+- 视频默认路线改为 `cogvideox-flash`（配置智谱 Key 时），Seedance `doubao-seedance-1-0-pro-250528` 作为备用/独立路线。
+- 两条视频路线均保持无声；不再引入 Seedance 1.5 Pro，也不自动追加声音提示词。
+- 轮换只发生在创建任务被明确拒绝且可安全重试时；网络超时等提交状态未知场景不会重复提交视频任务。
+
 ## [0.3.0] - 2026-08-15
 
 ### Added
