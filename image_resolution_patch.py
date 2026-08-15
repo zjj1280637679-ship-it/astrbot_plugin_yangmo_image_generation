@@ -68,11 +68,7 @@ def _size_for_budget(size: str, max_pixels: int) -> str:
 
 def _aspect_to_size_with_explicit_pixels(aspect: str, config: dict) -> str:
     value = str(aspect or "").strip().lower()
-    match = _SIZE_RE.match(value)
-    if match:
-        # Explicit pixels are carried as a private sentinel until the candidate
-        # model is known. validate_size here still enforces the global safety
-        # envelope; per-model capability is checked later without downscaling.
+    if _SIZE_RE.match(value):
         exact = _api.validate_size(value)
         return _FIXED_PREFIX + exact
     return _ORIGINAL_ASPECT_TO_SIZE(aspect, config)
@@ -110,16 +106,37 @@ def _body_per_model(self, model: str, prompt: str, size: str, refs: list[str], c
     return _ORIGINAL_BODY(model, prompt, effective, refs, count)
 
 
+def _preflight_per_model(self, prompt: str, size: str, refs: list[str], count: int) -> None:
+    if not str(prompt or "").strip():
+        raise _api.ImageConfigError("prompt 不能为空")
+    _, _, compatible = self._standard_context(refs, count)
+    usable = 0
+    last_skip: Exception | None = None
+    for model in compatible:
+        try:
+            self._body(model, prompt, size, refs, count)
+            usable += 1
+        except _api.ImageApiError as exc:
+            if _RESOLUTION_SKIP in str(exc):
+                last_skip = exc
+                continue
+            raise
+    if usable == 0:
+        if last_skip is not None:
+            raise _api.ImageConfigError(
+                "用户指定的像素尺寸没有任何当前普通图片模型能够原样满足"
+            )
+        raise _api.ImageConfigError("没有与当前请求兼容的普通图片模型")
+
+
 def _quota_or_resolution_skip(exc: Exception) -> bool:
     if _RESOLUTION_SKIP in str(exc):
         return True
     return _ORIGINAL_QUOTA_ERROR(exc)
 
 
-# Make WIDTHxHEIGHT an explicit-user channel while keeping the public tool
-# compact. Named aspects and ratios remain ordinary AUTO_MAX composition input.
 _main.aspect_to_size = _aspect_to_size_with_explicit_pixels
-# Convert size only after a concrete candidate model is known.
 _api.ArkImageClient._body = _body_per_model
+_api.ArkImageClient.preflight = _preflight_per_model
 _api.ArkImageClient._quota_error = staticmethod(_quota_or_resolution_skip)
 _main.VERSION = "0.3.5"
