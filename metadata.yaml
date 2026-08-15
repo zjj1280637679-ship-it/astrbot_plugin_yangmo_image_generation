@@ -1,8 +1,8 @@
 name: astrbot_plugin_yangmo_image_generation
 display_name: "AI 图片与视频生成及原图交付"
-desc: "给 AstrBot 主 Agent 增加轻量图片/视频生成 harness：原生 Skill 渐进披露，图片与视频工具可随时调用；引用/回复图片在 refs=current 时优先走 AstrBot 原生 quoted-message 快速解析，失败再保留 Agent 外部解析兜底；图片模型轮换默认优先保持请求分辨率，避免同一画幅因模型切换出现忽高忽低；配置智谱 Key 后默认优先 CogVideoX-Flash，明确可轮换的创建失败再尝试 Seedance 1.0 Pro；视频时长、画幅、分辨率、尾帧、预告和自动交付默认值可在设置中调整。"
-short_desc: "图片 + CogVideoX/Seedance 视频生成，支持引用图快速直达、稳定图片分辨率和可配置视频默认值。"
-version: "0.3.4"
+desc: "给 AstrBot 主 Agent 增加轻量图片/视频生成 harness：原生 Skill 渐进披露，图片与视频工具可随时调用；引用/回复图片在 refs=current 时优先走 AstrBot 原生 quoted-message 快速解析，失败再保留 Agent 外部解析兜底；图片像素默认按画幅取最大目标值，模型轮换不允许静默降像素，只有用户明确要求时才改变像素目标；配置智谱 Key 后默认优先 CogVideoX-Flash，明确可轮换的创建失败再尝试 Seedance 1.0 Pro；视频时长、画幅、分辨率、尾帧、预告和自动交付默认值可在设置中调整。"
+short_desc: "图片 + CogVideoX/Seedance 视频生成，默认最大像素、引用图快速直达。"
+version: "0.3.5"
 astrbot_version: ">=4.26.1"
 author: "羊膜大人"
 repo: "https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation"
