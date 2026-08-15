@@ -32,10 +32,10 @@
     "default": "5461x3072"
   },
   "video_model": {
-    "description": "Seedance 视频模型",
+    "description": "Seedance 视频主模型",
     "type": "string",
     "default": "doubao-seedance-1-0-pro-250528",
-    "hint": "默认使用 Seedance 1.0 Pro 250528；支持文生视频与单首帧图生视频。"
+    "hint": "默认优先使用 Seedance 1.0 Pro 250528；支持文生视频与单首帧图生视频。"
   },
   "video_base_url": {
     "description": "方舟视频生成 API 基础地址",
@@ -48,6 +48,41 @@
     "default": "",
     "hint": "留空时自动复用 ark_api_key。",
     "obvious_hint": true
+  },
+  "zhipu_video_fallback_enabled": {
+    "description": "启用 CogVideoX-Flash 视频轮换",
+    "type": "bool",
+    "default": true,
+    "hint": "Seedance 在创建任务前明确遇到限流、额度、过载或服务端错误时，自动尝试智谱 CogVideoX-Flash。网络超时等结果未知场景不会自动重复提交。"
+  },
+  "zhipu_video_api_key": {
+    "description": "智谱视频 API Key",
+    "type": "string",
+    "default": "",
+    "hint": "用于 CogVideoX-Flash 轮换。留空时不启用实际轮换。",
+    "obvious_hint": true
+  },
+  "zhipu_video_model": {
+    "description": "智谱视频轮换模型",
+    "type": "string",
+    "default": "cogvideox-flash"
+  },
+  "zhipu_video_base_url": {
+    "description": "智谱视频 API 基础地址",
+    "type": "string",
+    "default": "https://open.bigmodel.cn/api/paas/v4"
+  },
+  "zhipu_video_quality": {
+    "description": "CogVideoX-Flash 输出模式",
+    "type": "string",
+    "default": "speed",
+    "hint": "speed=速度优先；quality=质量优先。作为轮换模型默认使用 speed。"
+  },
+  "zhipu_video_fps": {
+    "description": "CogVideoX-Flash 帧率",
+    "type": "int",
+    "default": 30,
+    "hint": "当前 API 支持 30 或 60；非 60 值会按 30 处理。"
   },
   "video_poll_interval_seconds": {
     "description": "视频任务轮询间隔（秒）",
@@ -91,7 +126,7 @@
     "description": "制作 AI 内部图片/视频预览的 ffmpeg 路径",
     "type": "string",
     "default": "ffmpeg",
-    "hint": "失败只影响内部预览，不影响原始生成物落库和发送。"
+    "hint": "失败只影响内部预览，不影响原始生成物落库和发送；CogVideoX-Flash 首帧超过 5 MiB 时也会用它压缩。"
   },
   "generated_ttl_days": {
     "description": "生成图片/视频保留天数",
