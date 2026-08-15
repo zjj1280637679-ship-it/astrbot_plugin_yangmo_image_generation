@@ -9,3 +9,7 @@ from . import video_order_patch as _video_order_patch  # noqa: F401
 # first, while an explicitly quoted/replied image gets a low-latency fast path
 # before the Agent needs to call an external ctximg/resolver tool.
 from . import quote_fastpath as _quote_fastpath  # noqa: F401
+
+# Fill omitted generate_video arguments from plugin settings. Explicit Agent
+# arguments always win; this changes defaults, not permissions or tool order.
+from . import video_defaults_patch as _video_defaults_patch  # noqa: F401
