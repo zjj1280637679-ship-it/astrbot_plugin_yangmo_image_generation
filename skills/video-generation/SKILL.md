@@ -1,6 +1,6 @@
 ---
 name: video-generation
-description: 当用户需要文生视频、把当前/历史/已解析图片作为首帧生成视频、续接视频、比较候选视频或让静态画面动起来时使用。视频工具可直接调用，默认先通知并自动发送；本 Skill 只提供按需工作方法，不构成权限门。
+description: 当用户需要文生视频、把当前/引用/历史/已解析图片作为首帧生成视频、续接视频、比较候选视频或让静态画面动起来时使用。视频工具可直接调用，默认先通知并自动发送；本 Skill 只提供按需工作方法，不构成权限门。
 ---
 
 # 视频生成
@@ -25,7 +25,13 @@ Agent 可以自由关闭机械默认：`announce=false` 表示已经自己预告
 
 ## 首帧来源
 
-`first_frame` 支持空字符串（文生视频）、`current`、`genimg:...`、`genframe:...` 和 `resolved`。`resolved` 是松耦合互操作入口：其他图片定位/搜索工具先把原图作为 ImageContent 返回给 Agent，再由本工具消费；本插件不导入其他插件，也不读取其他插件私有存储。
+`first_frame` 支持空字符串（文生视频）、`current`、`genimg:...`、`genframe:...` 和 `resolved`。
+
+`current` 不只表示当前消息直接上传的图片：当用户明确回复/引用一张旧图时，插件会先检查 AstrBot `Reply.chain` 中是否已经带有原图；没有时再用 AstrBot 自带 quoted-message parser 做一次短超时的快速解析。因此“引用这张图做成 5 秒视频”应优先直接调用 `generate_video(first_frame="current")`，不需要默认先走历史图片搜索。
+
+如果引用快速路径失败或超时，再调用外部图片定位/搜索工具，把原图作为 ImageContent 返回给 Agent，然后使用 `resolved`。这个 fallback 仍然保留；本插件不导入其他插件，也不读取其他插件私有存储。
+
+若用户同时直接上传新图并引用旧图，直接上传图片保持更高优先级，所以 `first_frame="current"` 不会让旧引用图悄悄覆盖新上传图。
 
 ## 提示词方法
 
