@@ -4,6 +4,7 @@
   "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；仅额度或限流错误才尝试下一项。"},
   "image_model": {"description":"图片模型列表为空时的兜底模型","type":"string","default":"doubao-seedream-5-0-pro-260628"},
   "image_size": {"description":"无法识别画幅时的兜底图片尺寸","type":"string","default":"5461x3072"},
+  "quoted_image_fastpath_timeout_seconds": {"description":"引用图片快速解析最长等待（秒）","type":"int","default":3,"hint":"refs=current 或视频首帧=current 时：先读取 Reply.chain 内已附带图片；没有时才调用 AstrBot 自带引用消息解析器。超时或失败立即降级，不阻塞现有 Agent 图片定位/解析兜底。建议 1~5 秒。"},
   "zhipu_video_fallback_enabled": {"description":"启用 CogVideoX-Flash 视频主路线","type":"bool","default":true,"hint":"配置智谱 API Key 后优先使用 CogVideoX-Flash；若创建任务阶段明确遇到可轮换的限流、额度、过载或服务端错误，再尝试 Seedance 1.0 Pro。网络超时等结果未知场景不会重复提交。"},
   "zhipu_video_api_key": {"description":"智谱视频 API Key（默认视频路线）","type":"string","default":"","hint":"配置后 CogVideoX-Flash 成为默认视频模型；留空时仍可独立使用 Seedance 1.0 Pro。","obvious_hint":true},
   "zhipu_video_model": {"description":"默认视频模型","type":"string","default":"cogvideox-flash"},
