@@ -170,14 +170,18 @@ async def _current_images_with_quote(self, event) -> list[tuple[bytes, str]]:
     Ordering is intentional: an image freshly attached by the user remains the
     first ``current`` image for video first-frame selection. A quoted image is
     appended, not allowed to silently override an explicit current attachment.
-    Image-generation reference deduplication still happens in the original
-    ``_resolve_references`` layer by SHA-256.
+    The lower-priority quoted extension is capped to the remaining reference
+    budget so it cannot make a previously valid direct-image request fail just
+    because the message also contains a Reply segment.
     """
     direct = await _ORIGINAL_CURRENT_IMAGES(self, event)
+    remaining = max(0, _main.MAX_REFERENCE_IMAGES - len(direct))
+    if remaining <= 0:
+        return direct
     quoted = await _quoted_images(self, event)
     if not quoted:
         return direct
-    return [*direct, *quoted]
+    return [*direct, *quoted[:remaining]]
 
 
 # Patch the private media resolver only. Public tools, tool schemas, Agent
