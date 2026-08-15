@@ -1,17 +1,13 @@
 """Per-model automatic maximum pixel policy for image generation.
 
 Policy:
-- The Agent chooses composition/aspect, not routine pixel dimensions.
-- When the user has NOT explicitly requested pixels, every candidate model uses
-  its own configured maximum pixel budget for that aspect.
-- When the user HAS explicitly requested pixels, that exact target is preserved;
-  models unable to satisfy it are skipped before an API call.
-- Per-model max pixel values are objective environment settings and may be
-  overridden from the plugin configuration without changing Agent policy.
-
-The public generate_image tool intentionally keeps no pixel parameter. Explicit
-pixel requests are carried as user intent in `aspect` using WIDTHxHEIGHT; the
-image Skill tells the Agent not to invent such values on its own.
+- Named aspects / W:H ratios are AUTO_MAX: each candidate model uses its own
+  configured maximum pixel budget while preserving the requested composition.
+- WIDTHxHEIGHT is USER_FIXED: it is accepted only as an explicit pixel target
+  and must be preserved exactly. A model that cannot satisfy it is skipped with
+  zero API calls; rotation may continue to a compatible model.
+- The image Skill tells the Agent never to invent WIDTHxHEIGHT merely for speed
+  or quality. Only an explicit user pixel/resolution request should use it.
 """
 
 from __future__ import annotations
@@ -23,11 +19,12 @@ from typing import Any
 from . import api as _api
 from . import main as _main
 
+_ORIGINAL_ASPECT_TO_SIZE = _main.aspect_to_size
 _ORIGINAL_BODY = _api.ArkImageClient._body
-_ORIGINAL_LEG = _api.ArkImageClient._leg
 _ORIGINAL_QUOTA_ERROR = _api.ArkImageClient._quota_error
 _RESOLUTION_SKIP = "ResolutionRouteSkip"
 _SIZE_RE = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
+_FIXED_PREFIX = "user-fixed:"
 
 _BUILTIN_MAX_PIXELS = {
     "doubao-seedream-5-0-pro-260628": 4_624_220,
@@ -58,12 +55,7 @@ def _size_for_budget(size: str, max_pixels: int) -> str:
     match = _SIZE_RE.match(requested)
     assert match is not None
     width, height = (int(item) for item in match.groups())
-    pixels = width * height
-    if pixels <= 0:
-        raise _api.ImageConfigError("图片尺寸无效")
-    # Preserve only the aspect ratio. AUTO_MAX means fill this model's configured
-    # pixel budget as closely as possible using even dimensions.
-    scale = math.sqrt(max_pixels / pixels)
+    scale = math.sqrt(max_pixels / (width * height))
     out_w = max(2, round(width * scale / 2) * 2)
     out_h = max(2, round(height * scale / 2) * 2)
     while out_w * out_h > max_pixels:
@@ -74,45 +66,48 @@ def _size_for_budget(size: str, max_pixels: int) -> str:
     return f"{out_w}x{out_h}"
 
 
-def _is_user_fixed_size(size: str) -> bool:
-    """Recognize an explicit pixel target carried through aspect_to_size.
+def _aspect_to_size_with_explicit_pixels(aspect: str, config: dict) -> str:
+    value = str(aspect or "").strip().lower()
+    match = _SIZE_RE.match(value)
+    if match:
+        # Explicit pixels are carried as a private sentinel until the candidate
+        # model is known. validate_size here still enforces the global safety
+        # envelope; per-model capability is checked later without downscaling.
+        exact = _api.validate_size(value)
+        return _FIXED_PREFIX + exact
+    return _ORIGINAL_ASPECT_TO_SIZE(aspect, config)
 
-    Named aspects and W:H ratios are converted by main.py before reaching here,
-    so the patch records intent on the event/tool side rather than guessing from
-    the resulting dimensions. This helper is retained for defensive callers.
-    """
-    return bool(_SIZE_RE.match(str(size or "").strip()))
 
-
-def _auto_size_for_model(self, model: str, size: str) -> str:
+def _effective_size(self, model: str, size: str) -> str:
+    text = str(size or "")
     budget = _configured_max_pixels(self.config, model)
-    minimum = int(_api.model_caps(model).get("min_pixels", _api._MIN_PIXELS))
+    caps = _api.model_caps(model)
+    minimum = int(caps.get("min_pixels", _api._MIN_PIXELS))
     if budget < minimum:
         raise _api.ImageConfigError(
             f"模型 {model} 的最大像素配置 {budget} 低于模型最小像素 {minimum}"
         )
-    return _size_for_budget(size, budget)
+
+    if text.startswith(_FIXED_PREFIX):
+        exact = _api.validate_size(text[len(_FIXED_PREFIX):])
+        match = _SIZE_RE.match(exact)
+        assert match is not None
+        width, height = (int(item) for item in match.groups())
+        pixels = width * height
+        if pixels > budget or pixels < minimum:
+            raise _api.ImageApiError(
+                f"{_RESOLUTION_SKIP}: model={model} user_fixed={exact} "
+                f"allowed_pixels={minimum}..{budget}",
+                api_calls=0,
+            )
+        return exact
+
+    return _size_for_budget(text, budget)
 
 
 def _body_per_model(self, model: str, prompt: str, size: str, refs: list[str], count: int) -> dict:
-    # `self` here is ArkImageClient because we install this as an instance method.
-    effective = _auto_size_for_model(self, model, size)
+    effective = _effective_size(self, model, size)
     return _ORIGINAL_BODY(model, prompt, effective, refs, count)
-
-
-async def _leg_per_model_max(
-    self,
-    base: str,
-    key: str,
-    model: str,
-    prompt: str,
-    size: str,
-    refs: list[str],
-    count: int,
-):
-    # _body() now derives the candidate model's AUTO_MAX size. No model is
-    # skipped merely because another model has a larger maximum.
-    return await _ORIGINAL_LEG(self, base, key, model, prompt, size, refs, count)
 
 
 def _quota_or_resolution_skip(exc: Exception) -> bool:
@@ -121,9 +116,10 @@ def _quota_or_resolution_skip(exc: Exception) -> bool:
     return _ORIGINAL_QUOTA_ERROR(exc)
 
 
-# ArkImageClient._body was static. Install an instance-aware wrapper so it can
-# read per-model overrides from this plugin instance's config.
+# Make WIDTHxHEIGHT an explicit-user channel while keeping the public tool
+# compact. Named aspects and ratios remain ordinary AUTO_MAX composition input.
+_main.aspect_to_size = _aspect_to_size_with_explicit_pixels
+# Convert size only after a concrete candidate model is known.
 _api.ArkImageClient._body = _body_per_model
-_api.ArkImageClient._leg = _leg_per_model_max
 _api.ArkImageClient._quota_error = staticmethod(_quota_or_resolution_skip)
 _main.VERSION = "0.3.5"
