@@ -5,7 +5,8 @@ Design goals:
 - Treat ``current`` as "images attached to this event, including an explicitly
   quoted image when AstrBot can resolve it".
 - Prefer zero-network data already embedded in ``Reply.chain``.
-- Only if that is absent, reuse AstrBot's own quoted-message image extractor.
+- Only if that is absent, reuse AstrBot's own quoted-message image extractor on
+  OneBot-like platforms.
 - Fail soft and fall back to the existing Agent resolver path instead of making
   a quote-resolution failure abort generation.
 
@@ -63,6 +64,22 @@ def _reply_components(event) -> list[Any]:
     if Reply is None:
         return []
     return [item for item in _top_level_chain(event) if isinstance(item, Reply)]
+
+
+def _is_onebot_like(event) -> bool:
+    """Remote quote lookup is OneBot/NapCat-specific; embedded Reply.chain is not."""
+    try:
+        platform_name = str(event.get_platform_name() or "").lower()
+    except Exception:
+        platform_name = ""
+    try:
+        platform_id = str(event.get_platform_id() or "").lower()
+    except Exception:
+        platform_id = ""
+    return any(
+        token in platform_name or token in platform_id
+        for token in ("aiocqhttp", "onebot", "napcat", "qq")
+    )
 
 
 def _embedded_reply_images(event) -> list[Image]:
@@ -130,10 +147,10 @@ async def _quoted_images(self, event) -> list[tuple[bytes, str]]:
         )
         return embedded_result
 
-    # Layer 2: AstrBot's official quoted-message resolver. It may call OneBot
-    # get_msg/get_image, so cap its latency. A miss must not block the Agent's
-    # existing ctximg/resolved fallback path.
-    if extract_quoted_message_images is None:
+    # Layer 2 is deliberately restricted to OneBot-like platforms. The AstrBot
+    # core extractor is backed by OneBot get_msg/get_image calls; attempting it
+    # on WebChat or another adapter would only add avoidable latency.
+    if not _is_onebot_like(event) or extract_quoted_message_images is None:
         return []
 
     try:
@@ -188,3 +205,15 @@ async def _current_images_with_quote(self, event) -> list[tuple[bytes, str]]:
 # ordering, delivery and external-plugin contracts remain unchanged.
 _main.IndependentImageGeneration._current_images = _current_images_with_quote
 _main.VERSION = "0.3.2"
+
+# Tool schema extraction differs across AstrBot revisions. If it reads the live
+# Python docstring at plugin registration time, append the new `current`
+# semantics; if the decorator already captured metadata, this is harmless and
+# the native Skills still carry the same guidance.
+for _tool_name in ("generate_image", "generate_video"):
+    _tool = getattr(_main.IndependentImageGeneration, _tool_name, None)
+    if _tool is not None:
+        _tool.__doc__ = (_tool.__doc__ or "") + (
+            "\n\n`current` 也会尝试读取当前 QQ Reply/引用消息中的图片；"
+            "先走 Reply.chain，再走 AstrBot 原生 quoted-message 快速解析，失败后仍可用 resolved 兜底。"
+        )
