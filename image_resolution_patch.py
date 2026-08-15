@@ -1,16 +1,15 @@
-"""Keep image output resolution stable across model rotation.
+"""Keep image output resolution stable and maximal by default.
 
-The base client historically calls ``fit_size(model, requested_size)`` inside
-``_body``. That silently shrinks the same requested 4K-ish size when the
-selected model has a smaller pixel ceiling, while fallback models may keep the
-full size. The result looks like random high/low resolution when the route
-changes.
+Policy:
+- Pixel dimensions are a harness concern, not something the Agent should vary on
+  its own. Unless the user explicitly asks for a different pixel size, image
+  generation uses the maximum target size derived from the requested aspect.
+- Model rotation must never silently downscale that target. A route that cannot
+  honor the target dimensions is skipped before any API call, and the client
+  continues to the next configured image model.
 
-When ``image_preserve_requested_resolution`` is enabled (default), a model that
-cannot honor the requested pixel dimensions is treated as an ineligible route
-*before* making an API call. The client then continues to the next configured
-image model. Explicitly disabling the option restores the old "prefer model,
-allow silent downscale" behavior.
+This module therefore makes resolution preservation unconditional. There is no
+setting that can accidentally re-enable silent downscaling.
 """
 
 from __future__ import annotations
@@ -23,19 +22,6 @@ _ORIGINAL_QUOTA_ERROR = _api.ArkImageClient._quota_error
 _RESOLUTION_SKIP = "ResolutionRouteSkip"
 
 
-def _enabled(config) -> bool:
-    value = config.get("image_preserve_requested_resolution", True)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-    return True
-
-
 async def _leg_preserve_resolution(
     self,
     base: str,
@@ -46,16 +32,15 @@ async def _leg_preserve_resolution(
     refs: list[str],
     count: int,
 ):
-    if _enabled(self.config):
-        requested = _api.validate_size(size)
-        effective = _api.fit_size(model, requested)
-        if effective != requested:
-            # Zero API calls: this route is skipped deterministically because
-            # it cannot honor the user's/configured output dimensions.
-            raise _api.ImageApiError(
-                f"{_RESOLUTION_SKIP}: model={model} requested={requested} effective={effective}",
-                api_calls=0,
-            )
+    requested = _api.validate_size(size)
+    effective = _api.fit_size(model, requested)
+    if effective != requested:
+        # Zero API calls: this route is deterministically incompatible with the
+        # requested/default pixel target. Never silently shrink it.
+        raise _api.ImageApiError(
+            f"{_RESOLUTION_SKIP}: model={model} requested={requested} effective={effective}",
+            api_calls=0,
+        )
     return await _ORIGINAL_LEG(self, base, key, model, prompt, size, refs, count)
 
 
@@ -69,4 +54,4 @@ _api.ArkImageClient._leg = _leg_preserve_resolution
 _api.ArkImageClient._quota_error = staticmethod(_quota_or_resolution_skip)
 
 # Imported after the other compatibility patches.
-_main.VERSION = "0.3.4"
+_main.VERSION = "0.3.5"
