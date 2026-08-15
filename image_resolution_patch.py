@@ -8,6 +8,9 @@ Policy:
   zero API calls; rotation may continue to a compatible model.
 - The image Skill tells the Agent never to invent WIDTHxHEIGHT merely for speed
   or quality. Only an explicit user pixel/resolution request should use it.
+
+AstrBot 4.27.x expects flat plugin configuration entries here, so built-in
+models use separate integer fields instead of an object/map setting.
 """
 
 from __future__ import annotations
@@ -26,28 +29,26 @@ _RESOLUTION_SKIP = "ResolutionRouteSkip"
 _SIZE_RE = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
 _FIXED_PREFIX = "user-fixed:"
 
-_BUILTIN_MAX_PIXELS = {
-    "doubao-seedream-5-0-pro-260628": 4_624_220,
-    "doubao-seedream-5-0-260128": 16_777_216,
-    "doubao-seedream-4-5-251128": 16_777_216,
-    "doubao-seedream-5.0-lite": 16_777_216,
+_MODEL_PIXEL_FIELDS = {
+    "doubao-seedream-5-0-pro-260628": ("image_max_pixels_seedream_5_pro", 4_624_220),
+    "doubao-seedream-5-0-260128": ("image_max_pixels_seedream_5", 16_777_216),
+    "doubao-seedream-4-5-251128": ("image_max_pixels_seedream_4_5", 16_777_216),
+    "doubao-seedream-5.0-lite": ("image_max_pixels_seedream_lite", 16_777_216),
 }
 
 
 def _configured_max_pixels(config: Any, model: str) -> int:
-    overrides = config.get("image_model_max_pixels") if hasattr(config, "get") else None
-    if isinstance(overrides, dict):
-        raw = overrides.get(model)
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 0
-        if value > 0:
-            return value
-    builtin = _BUILTIN_MAX_PIXELS.get(model)
-    if builtin:
+    field, builtin = _MODEL_PIXEL_FIELDS.get(
+        model,
+        ("", int(_api.model_caps(model).get("max_pixels", _api._MAX_PIXELS))),
+    )
+    if not field:
         return builtin
-    return int(_api.model_caps(model).get("max_pixels", _api._MAX_PIXELS))
+    try:
+        value = int(config.get(field, builtin))
+    except (AttributeError, TypeError, ValueError):
+        value = builtin
+    return value if value > 0 else builtin
 
 
 def _size_for_budget(size: str, max_pixels: int) -> str:
@@ -139,4 +140,4 @@ _main.aspect_to_size = _aspect_to_size_with_explicit_pixels
 _api.ArkImageClient._body = _body_per_model
 _api.ArkImageClient.preflight = _preflight_per_model
 _api.ArkImageClient._quota_error = staticmethod(_quota_or_resolution_skip)
-_main.VERSION = "0.3.5"
+_main.VERSION = "0.3.6"
