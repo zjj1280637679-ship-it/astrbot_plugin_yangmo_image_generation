@@ -1,158 +1,27 @@
 {
-  "ark_api_key": {
-    "description": "火山方舟图片/视频 API Key",
-    "type": "string",
-    "default": "",
-    "hint": "敏感信息。图片与视频默认共用；不会写入回执、日志或发布包。",
-    "obvious_hint": true
-  },
-  "ark_base_url": {
-    "description": "方舟普通接口地址",
-    "type": "string",
-    "default": "https://ark.cn-beijing.volces.com/api/v3"
-  },
-  "image_models": {
-    "description": "图片模型优先级",
-    "type": "list",
-    "default": [
-      "doubao-seedream-5-0-pro-260628",
-      "doubao-seedream-5-0-260128",
-      "doubao-seedream-4-5-251128"
-    ],
-    "hint": "固定从高到低；仅额度或限流错误才尝试下一项。"
-  },
-  "image_model": {
-    "description": "图片模型列表为空时的兜底模型",
-    "type": "string",
-    "default": "doubao-seedream-5-0-pro-260628"
-  },
-  "image_size": {
-    "description": "无法识别画幅时的兜底图片尺寸",
-    "type": "string",
-    "default": "5461x3072"
-  },
-  "video_model": {
-    "description": "Seedance 视频基础模型",
-    "type": "string",
-    "default": "doubao-seedance-1-0-pro-250528",
-    "hint": "关闭声音时使用此模型；开启默认声音且该模型不支持原生音频时，会自动切到下方有声 Seedance 模型。"
-  },
-  "video_with_audio": {
-    "description": "视频默认生成声音",
-    "type": "bool",
-    "default": true,
-    "hint": "同时作用于 Seedance 与 CogVideoX-Flash。Seedance 会使用 generate_audio；CogVideoX-Flash 会使用 with_audio。"
-  },
-  "video_audio_model": {
-    "description": "Seedance 有声视频模型",
-    "type": "string",
-    "default": "doubao-seedance-1-5-pro-251215",
-    "hint": "当默认声音开启而 video_model 不支持原生音频时自动使用。"
-  },
-  "video_base_url": {
-    "description": "方舟视频生成 API 基础地址",
-    "type": "string",
-    "default": "https://ark.cn-beijing.volces.com/api/v3"
-  },
-  "video_api_key": {
-    "description": "视频 API Key（可选）",
-    "type": "string",
-    "default": "",
-    "hint": "留空时自动复用 ark_api_key。",
-    "obvious_hint": true
-  },
-  "zhipu_video_fallback_enabled": {
-    "description": "启用 CogVideoX-Flash 视频轮换",
-    "type": "bool",
-    "default": true,
-    "hint": "Seedance 在创建任务前明确遇到限流、额度、过载或服务端错误时，自动尝试智谱 CogVideoX-Flash。网络超时等结果未知场景不会自动重复提交。"
-  },
-  "zhipu_video_api_key": {
-    "description": "智谱视频 API Key",
-    "type": "string",
-    "default": "",
-    "hint": "用于 CogVideoX-Flash 轮换。留空时不启用实际轮换。",
-    "obvious_hint": true
-  },
-  "zhipu_video_model": {
-    "description": "智谱视频轮换模型",
-    "type": "string",
-    "default": "cogvideox-flash"
-  },
-  "zhipu_video_base_url": {
-    "description": "智谱视频 API 基础地址",
-    "type": "string",
-    "default": "https://open.bigmodel.cn/api/paas/v4"
-  },
-  "zhipu_video_quality": {
-    "description": "CogVideoX-Flash 输出模式",
-    "type": "string",
-    "default": "speed",
-    "hint": "speed=速度优先；quality=质量优先。作为轮换模型默认使用 speed。"
-  },
-  "zhipu_video_fps": {
-    "description": "CogVideoX-Flash 帧率",
-    "type": "int",
-    "default": 30,
-    "hint": "当前 API 支持 30 或 60；非 60 值会按 30 处理。"
-  },
-  "video_poll_interval_seconds": {
-    "description": "视频任务轮询间隔（秒）",
-    "type": "int",
-    "default": 4
-  },
-  "video_timeout_seconds": {
-    "description": "单个视频任务最长等待时间（秒）",
-    "type": "int",
-    "default": 600,
-    "hint": "超时只停止本次等待，不代表服务端任务一定已停止。"
-  },
-  "max_video_download_mb": {
-    "description": "单个生成视频最大下载大小（MiB）",
-    "type": "int",
-    "default": 256
-  },
-  "ark_plan_fallback": {
-    "description": "普通图片接口额度不足时使用套餐接口",
-    "type": "bool",
-    "default": true
-  },
-  "ark_plan_base_url": {
-    "description": "方舟套餐图片接口地址",
-    "type": "string",
-    "default": "https://ark.cn-beijing.volces.com/api/plan/v3"
-  },
-  "ark_plan_api_key": {
-    "description": "套餐专属 API Key",
-    "type": "string",
-    "default": "",
-    "hint": "敏感信息。留空时复用普通接口密钥。",
-    "obvious_hint": true
-  },
-  "ark_plan_image_model": {
-    "description": "套餐兜底图片模型",
-    "type": "string",
-    "default": "doubao-seedream-5.0-lite"
-  },
-  "ffmpeg_bin": {
-    "description": "制作 AI 内部图片/视频预览的 ffmpeg 路径",
-    "type": "string",
-    "default": "ffmpeg",
-    "hint": "失败只影响内部预览，不影响原始生成物落库和发送；CogVideoX-Flash 首帧超过 5 MiB 时也会用它压缩。"
-  },
-  "generated_ttl_days": {
-    "description": "生成图片/视频保留天数",
-    "type": "int",
-    "default": 30
-  },
-  "max_store_bytes": {
-    "description": "本插件生成图片存储上限",
-    "type": "int",
-    "default": 2147483648
-  },
-  "max_video_store_bytes": {
-    "description": "本插件视频与尾帧存储上限",
-    "type": "int",
-    "default": 8589934592
-  }
+  "ark_api_key": {"description":"火山方舟图片/视频 API Key","type":"string","default":"","hint":"敏感信息。图片与 Seedance 备用视频路线默认共用；不会写入回执、日志或发布包。","obvious_hint":true},
+  "ark_base_url": {"description":"方舟普通接口地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/v3"},
+  "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；仅额度或限流错误才尝试下一项。"},
+  "image_model": {"description":"图片模型列表为空时的兜底模型","type":"string","default":"doubao-seedream-5-0-pro-260628"},
+  "image_size": {"description":"无法识别画幅时的兜底图片尺寸","type":"string","default":"5461x3072"},
+  "zhipu_video_fallback_enabled": {"description":"启用 CogVideoX-Flash 视频主路线","type":"bool","default":true,"hint":"配置智谱 API Key 后优先使用 CogVideoX-Flash；若创建任务阶段明确遇到可轮换的限流、额度、过载或服务端错误，再尝试 Seedance 1.0 Pro。网络超时等结果未知场景不会重复提交。"},
+  "zhipu_video_api_key": {"description":"智谱视频 API Key（默认视频路线）","type":"string","default":"","hint":"配置后 CogVideoX-Flash 成为默认视频模型；留空时仍可独立使用 Seedance 1.0 Pro。","obvious_hint":true},
+  "zhipu_video_model": {"description":"默认视频模型","type":"string","default":"cogvideox-flash"},
+  "zhipu_video_base_url": {"description":"智谱视频 API 基础地址","type":"string","default":"https://open.bigmodel.cn/api/paas/v4"},
+  "zhipu_video_quality": {"description":"CogVideoX-Flash 输出模式","type":"string","default":"speed","hint":"speed=速度优先；quality=质量优先。"},
+  "zhipu_video_fps": {"description":"CogVideoX-Flash 帧率","type":"int","default":30,"hint":"当前 API 支持 30 或 60；非 60 值会按 30 处理。"},
+  "video_model": {"description":"Seedance 备用视频模型","type":"string","default":"doubao-seedance-1-0-pro-250528","hint":"备用/独立路线保持 Seedance 1.0 Pro 250528；当前按无原生音频能力处理。"},
+  "video_base_url": {"description":"方舟 Seedance 视频 API 基础地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/v3"},
+  "video_api_key": {"description":"Seedance 备用视频 API Key（可选）","type":"string","default":"","hint":"留空时自动复用 ark_api_key。","obvious_hint":true},
+  "video_poll_interval_seconds": {"description":"视频任务轮询间隔（秒）","type":"int","default":4},
+  "video_timeout_seconds": {"description":"单个视频任务最长等待时间（秒）","type":"int","default":600,"hint":"超时只停止本次等待，不代表服务端任务一定已停止。"},
+  "max_video_download_mb": {"description":"单个生成视频最大下载大小（MiB）","type":"int","default":256},
+  "ark_plan_fallback": {"description":"普通图片接口额度不足时使用套餐接口","type":"bool","default":true},
+  "ark_plan_base_url": {"description":"方舟套餐图片接口地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/plan/v3"},
+  "ark_plan_api_key": {"description":"套餐专属 API Key","type":"string","default":"","hint":"敏感信息。留空时复用普通接口密钥。","obvious_hint":true},
+  "ark_plan_image_model": {"description":"套餐兜底图片模型","type":"string","default":"doubao-seedream-5.0-lite"},
+  "ffmpeg_bin": {"description":"制作 AI 内部图片/视频预览的 ffmpeg 路径","type":"string","default":"ffmpeg","hint":"失败只影响内部预览，不影响原始生成物落库和发送；CogVideoX-Flash 首帧超过 5 MiB 时也会用它压缩。"},
+  "generated_ttl_days": {"description":"生成图片/视频保留天数","type":"int","default":30},
+  "max_store_bytes": {"description":"本插件生成图片存储上限","type":"int","default":2147483648},
+  "max_video_store_bytes": {"description":"本插件视频与尾帧存储上限","type":"int","default":8589934592}
 }
