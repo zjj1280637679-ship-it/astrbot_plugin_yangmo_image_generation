@@ -32,10 +32,22 @@
     "default": "5461x3072"
   },
   "video_model": {
-    "description": "Seedance 视频主模型",
+    "description": "Seedance 视频基础模型",
     "type": "string",
     "default": "doubao-seedance-1-0-pro-250528",
-    "hint": "默认优先使用 Seedance 1.0 Pro 250528；支持文生视频与单首帧图生视频。"
+    "hint": "关闭声音时使用此模型；开启默认声音且该模型不支持原生音频时，会自动切到下方有声 Seedance 模型。"
+  },
+  "video_with_audio": {
+    "description": "视频默认生成声音",
+    "type": "bool",
+    "default": true,
+    "hint": "同时作用于 Seedance 与 CogVideoX-Flash。Seedance 会使用 generate_audio；CogVideoX-Flash 会使用 with_audio。"
+  },
+  "video_audio_model": {
+    "description": "Seedance 有声视频模型",
+    "type": "string",
+    "default": "doubao-seedance-1-5-pro-251215",
+    "hint": "当默认声音开启而 video_model 不支持原生音频时自动使用。"
   },
   "video_base_url": {
     "description": "方舟视频生成 API 基础地址",
