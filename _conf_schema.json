@@ -1,9 +1,10 @@
 {
   "ark_api_key": {"description":"火山方舟图片/视频 API Key","type":"string","default":"","hint":"敏感信息。图片与 Seedance 备用视频路线默认共用；不会写入回执、日志或发布包。","obvious_hint":true},
   "ark_base_url": {"description":"方舟普通接口地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/v3"},
-  "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；额度/限流时尝试下一项。图片像素默认按画幅取插件允许的最大目标值；无法满足目标尺寸的模型会在零 API 调用下跳过，不会静默降清晰度。"},
+  "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；额度/限流时尝试下一项。用户未明确指定像素时，每个候选模型按自己的最大像素设置生成，不拿其他模型的上限约束它。"},
   "image_model": {"description":"图片模型列表为空时的兜底模型","type":"string","default":"doubao-seedream-5-0-pro-260628"},
-  "image_size": {"description":"无法识别画幅时的最大兜底图片尺寸","type":"string","default":"5461x3072","hint":"普通任务不需要手动修改。只有用户明确要求特定像素尺寸时，才应改变像素目标。"},
+  "image_size": {"description":"无法识别画幅时的兜底画幅尺寸","type":"string","default":"5461x3072","hint":"主要提供默认画幅比例基准；AUTO_MAX 会按当前模型自己的最大像素重新缩放。"},
+  "image_model_max_pixels": {"description":"各图片模型默认最大像素","type":"object","default":{"doubao-seedream-5-0-pro-260628":4624220,"doubao-seedream-5-0-260128":16777216,"doubao-seedream-4-5-251128":16777216,"doubao-seedream-5.0-lite":16777216},"hint":"键=模型名，值=该模型在用户未指定像素时使用的最大总像素。可独立修改。用户明确要求 WIDTHxHEIGHT 时不会用这里的值偷偷缩图；不满足的模型会零调用跳过。"},
   "quoted_image_fastpath_timeout_seconds": {"description":"引用图片快速解析最长等待（秒）","type":"int","default":3,"hint":"refs=current 或视频首帧=current 时：先读取 Reply.chain 内已附带图片；没有时才调用 AstrBot 自带引用消息解析器。超时或失败立即降级，不阻塞现有 Agent 图片定位/解析兜底。建议 1~5 秒。"},
   "zhipu_video_fallback_enabled": {"description":"启用 CogVideoX-Flash 视频主路线","type":"bool","default":true,"hint":"配置智谱 API Key 后优先使用 CogVideoX-Flash；若创建任务阶段明确遇到可轮换的限流、额度、过载或服务端错误，再尝试 Seedance 1.0 Pro。网络超时等结果未知场景不会重复提交。"},
   "zhipu_video_api_key": {"description":"智谱视频 API Key（默认视频路线）","type":"string","default":"","hint":"配置后 CogVideoX-Flash 成为默认视频模型；留空时仍可独立使用 Seedance 1.0 Pro。","obvious_hint":true},
