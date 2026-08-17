@@ -681,8 +681,14 @@ class IndependentImageGeneration(star.Star):
 
 
 async def _send_original(event: AstrMessageEvent, image: GeneratedImage) -> str | None:
-    suffix = image.file_path.suffix or ".bin"
-    component = File(name=f"{image.ref.replace(':', '_')}{suffix}", file=str(image.file_path))
+    # Image mime types go out as inline images (aiocqhttp converts Image components to
+    # base64 `image` segments, which WeCat delivers as WeChat images). Non-image payloads
+    # keep the File component path.
+    if (image.mime_type or "").startswith("image/"):
+        component = Image.fromFileSystem(path=str(image.file_path))
+    else:
+        suffix = image.file_path.suffix or ".bin"
+        component = File(name=f"{image.ref.replace(':', '_')}{suffix}", file=str(image.file_path))
     await event.send(MessageChain(chain=[component]))
     return None
 

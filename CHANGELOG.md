@@ -2,6 +2,12 @@
 
 本项目采用语义化版本。
 
+## [0.3.8] - 2026-08-17
+
+### Changed
+
+- 原图投递不再一律走 `File` 组件：`image/*` MIME 类型改用 `Image` 组件投递。AstrBot 的 aiocqhttp 平台会把 `Image` 转成 OneBot `image` 段（base64），配合 WeCat 0.1.0a2+ 的出站图片支持，微信端直接收到内联图片；此前 `File` 组件被 WeCat 以 `unsupported outbound segments: file`（retcode 1401）拒绝，生成成功但图片无法送达。
+
 ## [0.3.3] - 2026-08-15
 
 ### Added

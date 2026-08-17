@@ -140,4 +140,4 @@ _main.aspect_to_size = _aspect_to_size_with_explicit_pixels
 _api.ArkImageClient._body = _body_per_model
 _api.ArkImageClient.preflight = _preflight_per_model
 _api.ArkImageClient._quota_error = staticmethod(_quota_or_resolution_skip)
-_main.VERSION = "0.3.6"
+_main.VERSION = "0.3.8"
