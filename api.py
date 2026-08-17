@@ -280,6 +280,26 @@ class ArkImageClient:
     def __init__(self, config: dict):
         self.config = config
 
+    @staticmethod
+    def _bounded(value, default: int, minimum: int, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        return min(max(parsed, minimum), maximum)
+
+    def _http_timeout(self) -> int:
+        """Per-request HTTP timeout; configurable so slow backends can breathe."""
+        return self._bounded(
+            self.config.get("image_http_timeout_seconds"), 180, 30, 600
+        )
+
+    def _total_budget(self) -> int:
+        """Wall-clock budget for the whole generate() call (all model legs)."""
+        return self._bounded(
+            self.config.get("image_total_timeout_seconds"), 280, 60, 3600
+        )
+
     def models(self) -> list[str]:
         result = []
         for model in self.config.get("image_models") or []:
@@ -336,7 +356,9 @@ class ArkImageClient:
     def _headers(key: str) -> dict:
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
-    async def _post(self, base: str, key: str, body: dict, timeout: int = 180) -> dict:
+    async def _post(self, base: str, key: str, body: dict, timeout: int | None = None) -> dict:
+        if timeout is None:
+            timeout = self._http_timeout()
         url = str(base).rstrip("/") + "/images/generations"
         try:
             async with aiohttp.ClientSession() as session, session.post(
@@ -378,11 +400,11 @@ class ArkImageClient:
             body["sequential_image_generation_options"] = {"max_images": count}
         return body
 
-    async def _leg(self, base: str, key: str, model: str, prompt: str, size: str, refs: list[str], count: int):
+    async def _leg(self, base: str, key: str, model: str, prompt: str, size: str, refs: list[str], count: int, timeout: int | None = None):
         body = self._body(model, prompt, size, refs, count)
         calls = 1
         try:
-            value = await self._post(base, key, body)
+            value = await self._post(base, key, body, timeout=timeout)
         except ImageApiError as exc:
             exc.api_calls = calls
             raise
@@ -413,9 +435,21 @@ class ArkImageClient:
         base, key, compatible = self._standard_context(refs, count)
         total_calls = 0
         last_error = None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._total_budget()
         for model in compatible:
+            remaining = deadline - loop.time()
+            if remaining <= 5:
+                raise ImageApiError(
+                    f"图片生成总时长预算（{self._total_budget()} 秒）已用尽，"
+                    "未再尝试下一个模型；请稍后重试或调高 image_total_timeout_seconds。",
+                    api_calls=total_calls,
+                )
+            leg_timeout = min(self._http_timeout(), max(30, int(remaining) - 5))
             try:
-                urls, calls = await self._leg(base, key, model, prompt, size, refs, count)
+                urls, calls = await self._leg(
+                    base, key, model, prompt, size, refs, count, timeout=leg_timeout
+                )
                 return urls, total_calls + calls, model, False
             except ImageApiError as exc:
                 total_calls += exc.api_calls
@@ -444,9 +478,18 @@ class ArkImageClient:
                 "参考图数量超过套餐图片模型上限",
                 api_calls=total_calls,
             )
+        remaining = deadline - loop.time()
+        if remaining <= 5:
+            raise ImageApiError(
+                f"图片生成总时长预算（{self._total_budget()} 秒）已用尽，"
+                "未再尝试套餐兜底模型。",
+                api_calls=total_calls,
+            )
+        leg_timeout = min(self._http_timeout(), max(30, int(remaining) - 5))
         try:
             urls, calls = await self._leg(
-                plan_base, plan_key, plan_model, prompt, size, refs, count
+                plan_base, plan_key, plan_model, prompt, size, refs, count,
+                timeout=leg_timeout,
             )
         except ImageApiError as exc:
             exc.api_calls += total_calls

@@ -1,4 +1,6 @@
 {
+  "image_http_timeout_seconds": {"description":"单次图片 API 请求超时（秒）","type":"int","default":180,"hint":"单模型单次请求的 HTTP 墙钟上限。范围 30-600；Seedream 高分辨率生图较慢时可调大。"},
+  "image_total_timeout_seconds": {"description":"图片生成总时长预算（秒）","type":"int","default":280,"hint":"一次 generate_image 调用内所有模型轮换+套餐兜底的总预算，应略小于 AstrBot 的工具超时（tool_call_timeout）。范围 60-3600。"},
   "ark_api_key": {"description":"火山方舟图片/视频 API Key","type":"string","default":"","hint":"敏感信息。图片与 Seedance 备用视频路线默认共用；不会写入回执、日志或发布包。","obvious_hint":true},
   "ark_base_url": {"description":"方舟普通接口地址","type":"string","default":"https://ark.cn-beijing.volces.com/api/v3"},
   "image_models": {"description":"图片模型优先级","type":"list","default":["doubao-seedream-5-0-pro-260628","doubao-seedream-5-0-260128","doubao-seedream-4-5-251128"],"hint":"固定从高到低；额度/限流时尝试下一项。用户未明确指定像素时，每个候选模型按自己的最大像素设置生成，不拿其他模型的上限约束它。"},
