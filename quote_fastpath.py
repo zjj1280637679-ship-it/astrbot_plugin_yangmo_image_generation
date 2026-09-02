@@ -1,7 +1,7 @@
 """Fast path for images inside quoted/replied QQ messages.
 
 Design goals:
-- Keep ``generate_image`` / ``generate_video`` platform-neutral at the tool layer.
+- Keep ``generate_image`` platform-neutral at the tool layer.
 - Treat ``current`` as "images attached to this event, including an explicitly
   quoted image when AstrBot can resolve it".
 - Prefer zero-network data already embedded in ``Reply.chain``.
@@ -185,8 +185,8 @@ async def _current_images_with_quote(self, event) -> list[tuple[bytes, str]]:
     """Direct current images first, then quoted images as a fast-path extension.
 
     Ordering is intentional: an image freshly attached by the user remains the
-    first ``current`` image for video first-frame selection. A quoted image is
-    appended, not allowed to silently override an explicit current attachment.
+    first ``current`` image. A quoted image is appended, not allowed to silently
+    override an explicit current attachment.
     The lower-priority quoted extension is capped to the remaining reference
     budget so it cannot make a previously valid direct-image request fail just
     because the message also contains a Reply segment.
@@ -204,16 +204,3 @@ async def _current_images_with_quote(self, event) -> list[tuple[bytes, str]]:
 # Patch the private media resolver only. Public tools, tool schemas, Agent
 # ordering, delivery and external-plugin contracts remain unchanged.
 _main.IndependentImageGeneration._current_images = _current_images_with_quote
-_main.VERSION = "0.3.2"
-
-# Tool schema extraction differs across AstrBot revisions. If it reads the live
-# Python docstring at plugin registration time, append the new `current`
-# semantics; if the decorator already captured metadata, this is harmless and
-# the native Skills still carry the same guidance.
-for _tool_name in ("generate_image", "generate_video"):
-    _tool = getattr(_main.IndependentImageGeneration, _tool_name, None)
-    if _tool is not None:
-        _tool.__doc__ = (_tool.__doc__ or "") + (
-            "\n\n`current` 也会尝试读取当前 QQ Reply/引用消息中的图片；"
-            "先走 Reply.chain，再走 AstrBot 原生 quoted-message 快速解析，失败后仍可用 resolved 兜底。"
-        )

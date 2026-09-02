@@ -1,11 +1,34 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import math
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 
 import aiohttp
+
+
+SEEDREAM_5_PRO_MODEL = "doubao-seedream-5-0-pro-260628"
+SEEDREAM_5_PRO_MIN_PIXELS = 921_600
+SEEDREAM_5_PRO_MAX_PIXELS = 4_624_220
+SEEDREAM_5_PRO_MAX_REFS = 10
+PRIMARY_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3"
+
+ASPECT_RATIOS: dict[str, tuple[int, int]] = {
+    "landscape": (16, 9),
+    "portrait": (9, 16),
+    "square": (1, 1),
+    "photo": (4, 3),
+    "wide": (21, 9),
+}
+_RATIO_RE = re.compile(r"^(\d+):(\d+)$")
+_SIZE_RE = re.compile(r"^(\d+)[xX×](\d+)$")
+_MAX_ASPECT_RATIO = 16
+_DOWNLOAD_CAP = 64 * 1024 * 1024
 
 
 class ImageConfigError(ValueError):
@@ -20,156 +43,125 @@ class ImageApiError(RuntimeError):
         self.api_calls = max(0, int(api_calls))
 
 
-ASPECTS = {
-    "landscape": "5461x3072",
-    "portrait": "3072x5461",
-    "square": "4096x4096",
-    "photo": "4729x3547",
-    "wide": "6240x2673",
-}
-MODEL_CAPS = {
-    "doubao-seedream-4-5-251128": {
-        "group": True,
-        "max_refs": 14,
-        "min_pixels": 3_686_400,
-        "max_pixels": 16_777_216,
-        "custom_output_format": False,
-    },
-    "doubao-seedream-5-0-260128": {
-        "group": True,
-        "max_refs": 14,
-        "min_pixels": 3_686_400,
-        "max_pixels": 16_777_216,
-        "custom_output_format": True,
-    },
-    "doubao-seedream-5-0-pro-260628": {
-        "group": False,
-        "max_pixels": 4_624_220,
-        "min_pixels": 921_600,
-        "max_refs": 10,
-        "custom_output_format": True,
-    },
-}
-_RATIO_RE = re.compile(r"^(\d+):(\d+)$")
-_SIZE_RE = re.compile(r"^(\d+)x(\d+)$", re.IGNORECASE)
-_PIXEL_BUDGET = 4096 * 4096
-_MIN_PIXELS = 921_600
-_MAX_PIXELS = 4096 * 4096
-_MAX_ASPECT_RATIO = 16
-_MAX_OUTPUT_IMAGES = 15
-_DOWNLOAD_CAP = 64 * 1024 * 1024
+@dataclass(frozen=True)
+class SizeRequest:
+    mode: str
+    value: str
+    ratio: tuple[int, int] | None = None
 
 
-def require(config: dict, key: str):
-    value = config.get(key) if isinstance(config, dict) else None
-    if value is None or (isinstance(value, str) and not value.strip()):
-        raise ImageConfigError(f"缺少配置键 {key}")
-    return value
+@dataclass(frozen=True)
+class ImageModelCard:
+    route: str
+    label: str
+    base_url: str
+    api_key: str
+    model: str
+    max_pixels: int
+    enabled: bool = True
+
+    @property
+    def is_plan(self) -> bool:
+        return self.route == "plan_fallback"
+
+    def public_dict(self) -> dict:
+        return {
+            "route": self.route,
+            "label": self.label,
+            "enabled": self.enabled,
+            "base_url": self.base_url,
+            "model": self.model,
+            "max_pixels": self.max_pixels,
+            "configured": bool(self.base_url and self.api_key and self.model),
+        }
 
 
-def aspect_to_size(aspect: str, config: dict) -> str:
-    value = str(aspect or "").strip()
-    if value in ASPECTS:
-        return ASPECTS[value]
-    match = _RATIO_RE.match(value)
-    if match:
-        wr, hr = (int(item) for item in match.groups())
-        ratio_value = wr / hr if hr else 0
-        if wr > 0 and hr > 0 and 1 / _MAX_ASPECT_RATIO <= ratio_value <= _MAX_ASPECT_RATIO:
-            scale = math.sqrt(_PIXEL_BUDGET / (wr * hr))
-            width, height = wr * scale, hr * scale
-            return validate_size(f"{max(2, int(width) // 2 * 2)}x{max(2, int(height) // 2 * 2)}")
-        raise ImageConfigError("画幅比例必须在 1:16 到 16:1 之间")
-    return validate_size(str(require(config, "image_size")))
+def _mapping(config: Mapping, key: str) -> Mapping:
+    value = config.get(key, {})
+    return value if isinstance(value, Mapping) else {}
 
 
-def validate_size(size: str) -> str:
-    match = _SIZE_RE.match(str(size or ""))
-    if not match:
-        raise ImageConfigError("图片尺寸必须是 WIDTHxHEIGHT")
-    width, height = (int(item) for item in match.groups())
-    pixels = width * height
+def _text(value, default: str = "") -> str:
+    result = str(value or "").strip()
+    return result or default
+
+
+def _positive_int(value, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return parsed if parsed > 0 else default
+
+
+def aspect_to_size(aspect: str, config: Mapping | None = None) -> SizeRequest:
+    """Parse a tool-facing aspect into AUTO_MAX or USER_FIXED intent."""
+    del config  # Kept in the signature for plugin compatibility.
+    value = _text(aspect, "landscape").lower().replace(" ", "")
+    if value in ASPECT_RATIOS:
+        return SizeRequest("auto_max", value, ASPECT_RATIOS[value])
+    ratio_match = _RATIO_RE.fullmatch(value)
+    if ratio_match:
+        width_ratio, height_ratio = (int(item) for item in ratio_match.groups())
+        _validate_ratio(width_ratio, height_ratio)
+        return SizeRequest("auto_max", value, (width_ratio, height_ratio))
+    size_match = _SIZE_RE.fullmatch(value)
+    if size_match:
+        width, height = (int(item) for item in size_match.groups())
+        _validate_dimensions(width, height, SEEDREAM_5_PRO_MAX_PIXELS)
+        return SizeRequest("user_fixed", f"{width}x{height}")
+    raise ImageConfigError(
+        "aspect 必须是 landscape、portrait、square、photo、wide、W:H 或 WIDTHxHEIGHT"
+    )
+
+
+def _validate_ratio(width: int, height: int) -> None:
     ratio = width / height if height else 0
-    if pixels < _MIN_PIXELS or pixels > _MAX_PIXELS:
-        raise ImageConfigError(
-            f"图片总像素必须在 {_MIN_PIXELS} 到 {_MAX_PIXELS} 之间"
-        )
-    if not 1 / _MAX_ASPECT_RATIO <= ratio <= _MAX_ASPECT_RATIO:
+    if width <= 0 or height <= 0 or not 1 / _MAX_ASPECT_RATIO <= ratio <= _MAX_ASPECT_RATIO:
         raise ImageConfigError("图片宽高比必须在 1:16 到 16:1 之间")
-    return f"{width}x{height}"
 
 
-def fit_size(model: str, size: str) -> str:
-    size = validate_size(size)
-    caps = model_caps(model)
-    minimum = int(caps.get("min_pixels", _MIN_PIXELS))
-    limit = int(caps.get("max_pixels", _MAX_PIXELS))
-    match = _SIZE_RE.match(str(size or ""))
-    if not match:
-        raise ImageConfigError("图片尺寸必须是 WIDTHxHEIGHT")
-    width, height = (int(item) for item in match.groups())
+def _validate_dimensions(width: int, height: int, max_pixels: int) -> None:
+    _validate_ratio(width, height)
     pixels = width * height
-    target = limit if pixels > limit else minimum if pixels < minimum else pixels
-    if target != pixels:
-        scale = math.sqrt(target / pixels)
-        width = max(2, round(width * scale / 2) * 2)
-        height = max(2, round(height * scale / 2) * 2)
-    while width * height > limit:
+    if pixels < SEEDREAM_5_PRO_MIN_PIXELS or pixels > max_pixels:
+        raise ImageConfigError(
+            f"Seedream 5 Pro 图片总像素必须在 {SEEDREAM_5_PRO_MIN_PIXELS} 到 {max_pixels} 之间"
+        )
+
+
+def _size_for_ratio(ratio: tuple[int, int], max_pixels: int) -> str:
+    width_ratio, height_ratio = ratio
+    _validate_ratio(width_ratio, height_ratio)
+    if max_pixels < SEEDREAM_5_PRO_MIN_PIXELS:
+        raise ImageConfigError(
+            f"模型卡最大像素 {max_pixels} 低于 Seedream 5 Pro 最小像素 {SEEDREAM_5_PRO_MIN_PIXELS}"
+        )
+    max_pixels = min(max_pixels, SEEDREAM_5_PRO_MAX_PIXELS)
+    scale = math.sqrt(max_pixels / (width_ratio * height_ratio))
+    width = max(2, int(width_ratio * scale) // 2 * 2)
+    height = max(2, int(height_ratio * scale) // 2 * 2)
+    while width * height > max_pixels:
         if width >= height:
             width -= 2
         else:
             height -= 2
-    while width * height < minimum:
-        if width >= height:
-            width += 2
-        else:
-            height += 2
+    _validate_dimensions(width, height, max_pixels)
     return f"{width}x{height}"
 
 
-def model_caps(model: str) -> dict:
-    value = str(model or "").lower()
-    if model in MODEL_CAPS:
-        return dict(MODEL_CAPS[model])
-    if "seedream" in value and "pro" in value and ("5-0" in value or "5.0" in value):
-        return {
-            "group": False,
-            "min_pixels": 921_600,
-            "max_pixels": 4_624_220,
-            "max_refs": 10,
-            "custom_output_format": True,
-        }
-    if "seedream" in value and ("5-0" in value or "5.0" in value):
-        return {
-            "group": True,
-            "min_pixels": 3_686_400,
-            "max_pixels": 16_777_216,
-            "max_refs": 14,
-            "custom_output_format": True,
-        }
-    if "seedream" in value and ("4-5" in value or "4.5" in value):
-        return {
-            "group": True,
-            "min_pixels": 3_686_400,
-            "max_pixels": 16_777_216,
-            "max_refs": 14,
-            "custom_output_format": False,
-        }
-    if "seedream" in value and ("4-0" in value or "4.0" in value):
-        return {
-            "group": True,
-            "min_pixels": 921_600,
-            "max_pixels": 16_777_216,
-            "max_refs": 14,
-            "custom_output_format": False,
-        }
-    return {
-        "group": True,
-        "min_pixels": _MIN_PIXELS,
-        "max_pixels": _MAX_PIXELS,
-        "max_refs": 14,
-        "custom_output_format": True,
-    }
+def _effective_size(card: ImageModelCard, request: SizeRequest) -> str:
+    card_limit = min(card.max_pixels, SEEDREAM_5_PRO_MAX_PIXELS)
+    if request.mode == "user_fixed":
+        match = _SIZE_RE.fullmatch(request.value)
+        if match is None:
+            raise ImageConfigError("USER_FIXED 图片尺寸无效")
+        width, height = (int(item) for item in match.groups())
+        _validate_dimensions(width, height, card_limit)
+        return f"{width}x{height}"
+    if request.ratio is None:
+        raise ImageConfigError("AUTO_MAX 缺少画幅比例")
+    return _size_for_ratio(request.ratio, card_limit)
 
 
 def image_dimensions(data: bytes, mime_type: str) -> tuple[int, int]:
@@ -178,24 +170,20 @@ def image_dimensions(data: bytes, mime_type: str) -> tuple[int, int]:
         if (
             len(data) >= 24
             and data.startswith(b"\x89PNG\r\n\x1a\n")
-            and data[8:12] == b"\x00\x00\x00\r"
             and data[12:16] == b"IHDR"
         ):
-            return (
-                int.from_bytes(data[16:20], "big"),
-                int.from_bytes(data[20:24], "big"),
-            )
+            return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
         raise ImageConfigError("无法安全读取 PNG 参考图尺寸")
     if mime == "image/gif":
         if len(data) >= 10 and data.startswith((b"GIF87a", b"GIF89a")):
-            return (
-                int.from_bytes(data[6:8], "little"),
-                int.from_bytes(data[8:10], "little"),
-            )
+            return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
         raise ImageConfigError("无法安全读取 GIF 参考图尺寸")
     if mime == "image/jpeg" and data.startswith(b"\xff\xd8"):
         position = 2
-        sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+        sof_markers = {
+            0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+            0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
+        }
         while position < len(data):
             if data[position] != 0xFF:
                 position += 1
@@ -229,14 +217,11 @@ def image_dimensions(data: bytes, mime_type: str) -> tuple[int, int]:
     if mime == "image/webp" and len(data) >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         chunk = data[12:16]
         if chunk == b"VP8X":
-            return (
-                1 + int.from_bytes(data[24:27], "little"),
-                1 + int.from_bytes(data[27:30], "little"),
-            )
+            return 1 + int.from_bytes(data[24:27], "little"), 1 + int.from_bytes(data[27:30], "little")
         if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
             bits = int.from_bytes(data[21:25], "little")
             return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
-        if chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+        if chunk == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
             return (
                 int.from_bytes(data[26:28], "little") & 0x3FFF,
                 int.from_bytes(data[28:30], "little") & 0x3FFF,
@@ -248,12 +233,30 @@ def validate_reference_image(data: bytes, mime_type: str) -> tuple[int, int]:
     width, height = image_dimensions(data, mime_type)
     if width <= 14 or height <= 14:
         raise ImageConfigError("参考图宽和高都必须大于 14 像素")
-    ratio = width / height
-    if not 1 / _MAX_ASPECT_RATIO <= ratio <= _MAX_ASPECT_RATIO:
-        raise ImageConfigError("参考图宽高比必须在 1:16 到 16:1 之间")
+    _validate_ratio(width, height)
     if width * height > 36_000_000:
         raise ImageConfigError("参考图总像素不能超过 3600 万")
     return width, height
+
+
+def normalize_reference_format(data: bytes, mime_type: str) -> tuple[bytes, str]:
+    """Convert WebP/GIF inputs to PNG because Seedream 5 Pro accepts JPEG/PNG refs."""
+    mime = str(mime_type).lower()
+    if mime in {"image/png", "image/jpeg"}:
+        return data, mime
+    if mime not in {"image/webp", "image/gif"}:
+        raise ImageConfigError("参考图格式必须是 PNG、JPEG、WebP 或 GIF")
+    try:
+        from PIL import Image as PillowImage
+
+        with PillowImage.open(io.BytesIO(data)) as image:
+            image.seek(0)
+            converted = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+            output = io.BytesIO()
+            converted.save(output, format="PNG", optimize=True)
+    except Exception as exc:
+        raise ImageConfigError("WebP/GIF 参考图转换为 PNG 失败") from exc
+    return output.getvalue(), "image/png"
 
 
 def sniff_mime(data: bytes) -> str:
@@ -261,7 +264,7 @@ def sniff_mime(data: bytes) -> str:
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+    if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "image/webp"
     if data.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
@@ -277,7 +280,7 @@ def to_data_url(data: bytes, mime_type: str | None = None) -> str:
 
 
 class ArkImageClient:
-    def __init__(self, config: dict):
+    def __init__(self, config: Mapping):
         self.config = config
 
     @staticmethod
@@ -289,58 +292,86 @@ class ArkImageClient:
         return min(max(parsed, minimum), maximum)
 
     def _http_timeout(self) -> int:
-        """Per-request HTTP timeout; configurable so slow backends can breathe."""
-        return self._bounded(
-            self.config.get("image_http_timeout_seconds"), 180, 30, 600
-        )
+        return self._bounded(self.config.get("image_http_timeout_seconds"), 105, 10, 600)
 
     def _total_budget(self) -> int:
-        """Wall-clock budget for the whole generate() call (all model legs)."""
-        return self._bounded(
-            self.config.get("image_total_timeout_seconds"), 280, 60, 3600
+        return self._bounded(self.config.get("image_total_timeout_seconds"), 110, 20, 3600)
+
+    def total_budget(self) -> int:
+        """Public wall-clock budget shared by API generation and result download."""
+        return self._total_budget()
+
+    def model_cards(self) -> tuple[ImageModelCard, ImageModelCard]:
+        primary_cfg = _mapping(self.config, "primary_model_card")
+        primary = ImageModelCard(
+            route="standard_primary",
+            label="普通 API · Seedream 5 Pro",
+            base_url=_text(primary_cfg.get("base_url"), _text(self.config.get("ark_base_url"), PRIMARY_BASE_URL)),
+            api_key=_text(primary_cfg.get("api_key"), _text(self.config.get("ark_api_key"))),
+            model=_text(primary_cfg.get("model"), SEEDREAM_5_PRO_MODEL),
+            max_pixels=_positive_int(
+                primary_cfg.get("max_pixels", self.config.get("image_max_pixels_seedream_5_pro")),
+                SEEDREAM_5_PRO_MAX_PIXELS,
+            ),
         )
+        fallback_cfg = _mapping(self.config, "fallback_model_card")
+        fallback = ImageModelCard(
+            route="plan_fallback",
+            label="Plan API 回退 · Seedream 5 Pro",
+            base_url=_text(fallback_cfg.get("base_url"), _text(self.config.get("ark_plan_base_url"), PLAN_BASE_URL)),
+            api_key=_text(fallback_cfg.get("api_key"), _text(self.config.get("ark_plan_api_key"), primary.api_key)),
+            model=_text(fallback_cfg.get("model"), SEEDREAM_5_PRO_MODEL),
+            max_pixels=_positive_int(fallback_cfg.get("max_pixels"), SEEDREAM_5_PRO_MAX_PIXELS),
+            enabled=bool(fallback_cfg.get("enabled", self.config.get("ark_plan_fallback", True))),
+        )
+        return primary, fallback
 
     def models(self) -> list[str]:
-        result = []
-        for model in self.config.get("image_models") or []:
-            value = str(model or "").strip()
-            if value and value not in result:
-                result.append(value)
-        return result or [str(require(self.config, "image_model"))]
+        return [SEEDREAM_5_PRO_MODEL]
 
-    def _standard_context(
-        self, refs: list[str], count: int
-    ) -> tuple[str, str, list[str]]:
-        if count < 1 or count > _MAX_OUTPUT_IMAGES:
-            raise ImageConfigError(f"count 必须在 1 到 {_MAX_OUTPUT_IMAGES} 之间")
-        base = str(require(self.config, "ark_base_url"))
-        key = str(require(self.config, "ark_api_key"))
-        compatible = []
-        for model in self.models():
-            caps = model_caps(model)
-            if count > 1 and not caps.get("group", True):
-                continue
-            if len(refs) > int(caps.get("max_refs", 14)):
-                continue
-            compatible.append(model)
-        if not compatible:
-            raise ImageConfigError("没有与当前张数和参考图数量兼容的普通图片模型")
-        return base, key, compatible
+    def public_cards(self) -> list[dict]:
+        return [card.public_dict() for card in self.model_cards()]
 
-    def preflight(self, prompt: str, size: str, refs: list[str], count: int) -> None:
-        """Validate every deterministic, zero-request standard-path condition."""
-        if not str(prompt or "").strip():
+    def _candidate_cards(self, size: SizeRequest, refs: list[str]) -> list[tuple[ImageModelCard, str]]:
+        if len(refs) > SEEDREAM_5_PRO_MAX_REFS:
+            raise ImageConfigError(
+                f"Seedream 5 Pro 最多接受 {SEEDREAM_5_PRO_MAX_REFS} 张参考图"
+            )
+        candidates: list[tuple[ImageModelCard, str]] = []
+        rejected: list[str] = []
+        for card in self.model_cards():
+            if not card.enabled:
+                continue
+            if not card.base_url or not card.api_key or not card.model:
+                rejected.append(f"{card.label} 未配置完整")
+                continue
+            if card.model != SEEDREAM_5_PRO_MODEL:
+                rejected.append(f"{card.label} 模型必须是 {SEEDREAM_5_PRO_MODEL}")
+                continue
+            try:
+                effective_size = _effective_size(card, size)
+            except ImageConfigError as exc:
+                rejected.append(f"{card.label}: {exc}")
+                continue
+            candidates.append((card, effective_size))
+        if not candidates:
+            detail = "；".join(rejected) or "两张模型卡均不可用"
+            raise ImageConfigError(detail)
+        return candidates
+
+    def preflight(self, prompt: str, size: SizeRequest, refs: list[str]) -> None:
+        if not _text(prompt):
             raise ImageConfigError("prompt 不能为空")
-        _, _, compatible = self._standard_context(refs, count)
-        for model in compatible:
-            self._body(model, prompt, size, refs, count)
+        for card, effective_size in self._candidate_cards(size, refs):
+            self._body(card, prompt, effective_size, refs)
 
     @staticmethod
-    def _quota_error(exc: Exception) -> bool:
+    def _fallback_safe(exc: Exception) -> bool:
         text = str(exc)
-        return "HTTP 429" in text or any(
-            value in text
-            for value in (
+        return any(
+            marker in text
+            for marker in (
+                "HTTP 429",
                 "SetLimitExceeded",
                 "LimitExceeded",
                 "QuotaExceeded",
@@ -356,14 +387,12 @@ class ArkImageClient:
     def _headers(key: str) -> dict:
         return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
-    async def _post(self, base: str, key: str, body: dict, timeout: int | None = None) -> dict:
-        if timeout is None:
-            timeout = self._http_timeout()
-        url = str(base).rstrip("/") + "/images/generations"
+    async def _post(self, card: ImageModelCard, body: dict, timeout: float) -> dict:
+        url = card.base_url.rstrip("/") + "/images/generations"
         try:
             async with aiohttp.ClientSession() as session, session.post(
                 url,
-                headers=self._headers(key),
+                headers=self._headers(card.api_key),
                 json=body,
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as response:
@@ -383,118 +412,81 @@ class ArkImageClient:
         return value
 
     @staticmethod
-    def _body(model: str, prompt: str, size: str, refs: list[str], count: int) -> dict:
+    def _body(card: ImageModelCard, prompt: str, size: str, refs: list[str]) -> dict:
         body = {
-            "model": model,
+            "model": card.model,
             "prompt": prompt,
-            "size": fit_size(model, size),
+            "size": size,
             "response_format": "url",
+            "output_format": "png",
             "watermark": False,
         }
-        if model_caps(model).get("custom_output_format", True):
-            body["output_format"] = "png"
         if refs:
             body["image"] = refs
-        if count > 1 and model_caps(model).get("group", True):
-            body["sequential_image_generation"] = "auto"
-            body["sequential_image_generation_options"] = {"max_images": count}
         return body
 
-    async def _leg(self, base: str, key: str, model: str, prompt: str, size: str, refs: list[str], count: int, timeout: int | None = None):
-        body = self._body(model, prompt, size, refs, count)
-        calls = 1
+    async def _leg(
+        self,
+        card: ImageModelCard,
+        prompt: str,
+        size: str,
+        refs: list[str],
+        timeout: float,
+    ) -> str:
+        body = self._body(card, prompt, size, refs)
         try:
-            value = await self._post(base, key, body, timeout=timeout)
-        except ImageApiError as exc:
-            exc.api_calls = calls
+            value = await self._post(card, body, timeout)
+        except ImageApiError:
             raise
         except aiohttp.ClientError as exc:
-            raise ImageApiError(
-                f"图片 API 网络请求失败：{exc}", api_calls=calls
-            ) from exc
-        rows = value.get("data")
-        if rows is None:
-            rows = []
+            raise ImageApiError(f"图片 API 网络请求失败：{exc}") from exc
+        rows = value.get("data") or []
         if not isinstance(rows, list):
-            raise ImageApiError("图片 API 返回 data 形状无效", api_calls=calls)
-        urls = []
+            raise ImageApiError("图片 API 返回 data 形状无效")
         for row in rows:
             if not isinstance(row, dict):
-                raise ImageApiError("图片 API 返回图片项形状无效", api_calls=calls)
-            url = row.get("url")
-            if url is None:
                 continue
-            if not isinstance(url, str) or not url.strip():
-                raise ImageApiError("图片 API 返回图片 URL 形状无效", api_calls=calls)
-            urls.append(url)
-        if not urls:
-            raise ImageApiError("图片 API 没有返回可下载图片", api_calls=calls)
-        return urls[:count], calls
+            url = row.get("url")
+            if isinstance(url, str) and url.strip():
+                return url.strip()
+        raise ImageApiError("图片 API 没有返回可下载图片")
 
-    async def generate(self, prompt: str, size: str, refs: list[str], count: int):
-        base, key, compatible = self._standard_context(refs, count)
-        total_calls = 0
-        last_error = None
+    async def generate(
+        self,
+        prompt: str,
+        size: SizeRequest,
+        refs: list[str],
+        *,
+        deadline: float | None = None,
+    ):
+        candidates = self._candidate_cards(size, refs)
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._total_budget()
-        for model in compatible:
+        if deadline is None:
+            deadline = loop.time() + self._total_budget()
+        total_calls = 0
+        last_error: ImageApiError | None = None
+        for index, (card, effective_size) in enumerate(candidates):
             remaining = deadline - loop.time()
-            if remaining <= 5:
+            if remaining <= 1:
                 raise ImageApiError(
-                    f"图片生成总时长预算（{self._total_budget()} 秒）已用尽，"
-                    "未再尝试下一个模型；请稍后重试或调高 image_total_timeout_seconds。",
+                    f"图片生成总时长预算（{self._total_budget()} 秒）已用尽",
                     api_calls=total_calls,
                 )
-            leg_timeout = min(self._http_timeout(), max(30, int(remaining) - 5))
+            timeout = min(float(self._http_timeout()), remaining)
             try:
-                urls, calls = await self._leg(
-                    base, key, model, prompt, size, refs, count, timeout=leg_timeout
-                )
-                return urls, total_calls + calls, model, False
+                url = await self._leg(card, prompt, effective_size, refs, timeout)
+                return [url], total_calls + 1, card.model, card.is_plan, card.route, effective_size
             except ImageApiError as exc:
-                total_calls += exc.api_calls
-                if not self._quota_error(exc):
+                total_calls += max(1, exc.api_calls)
+                last_error = exc
+                has_next = index + 1 < len(candidates)
+                if not has_next or not self._fallback_safe(exc):
                     exc.api_calls = total_calls
                     raise
-                last_error = exc
-        if not bool(self.config.get("ark_plan_fallback", True)):
-            if last_error is not None:
-                last_error.api_calls = total_calls
-                raise last_error
-            raise ImageConfigError("没有与当前张数和参考图数量兼容的普通图片模型")
-        if last_error is None:
-            raise ImageConfigError("没有与当前张数和参考图数量兼容的普通图片模型")
-        plan_base = str(require(self.config, "ark_plan_base_url"))
-        plan_key = str(self.config.get("ark_plan_api_key") or key)
-        plan_model = str(require(self.config, "ark_plan_image_model"))
-        plan_caps = model_caps(plan_model)
-        if count > 1 and not plan_caps.get("group", True):
-            raise ImageConfigError(
-                "套餐图片模型不支持一次生成多张图",
-                api_calls=total_calls,
-            )
-        if len(refs) > int(plan_caps.get("max_refs", 14)):
-            raise ImageConfigError(
-                "参考图数量超过套餐图片模型上限",
-                api_calls=total_calls,
-            )
-        remaining = deadline - loop.time()
-        if remaining <= 5:
-            raise ImageApiError(
-                f"图片生成总时长预算（{self._total_budget()} 秒）已用尽，"
-                "未再尝试套餐兜底模型。",
-                api_calls=total_calls,
-            )
-        leg_timeout = min(self._http_timeout(), max(30, int(remaining) - 5))
-        try:
-            urls, calls = await self._leg(
-                plan_base, plan_key, plan_model, prompt, size, refs, count,
-                timeout=leg_timeout,
-            )
-        except ImageApiError as exc:
-            exc.api_calls += total_calls
-            raise
-        return urls, total_calls + calls, plan_model, True
+        if last_error is not None:
+            last_error.api_calls = total_calls
+            raise last_error
+        raise ImageConfigError("没有可用的 Seedream 5 Pro 模型卡")
 
     async def download(self, url: str) -> bytes:
         try:
@@ -516,3 +508,5 @@ class ArkImageClient:
                 return b"".join(chunks)
         except asyncio.TimeoutError as exc:
             raise ImageApiError("图片下载超时") from exc
+        except aiohttp.ClientError as exc:
+            raise ImageApiError(f"图片下载网络错误：{exc}") from exc

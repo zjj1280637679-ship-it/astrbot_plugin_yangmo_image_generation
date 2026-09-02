@@ -1,8 +1,8 @@
 name: astrbot_plugin_yangmo_image_generation
-display_name: "AI 图片与视频生成及原图交付"
-desc: "给 AstrBot 主 Agent 增加轻量图片/视频生成 harness：原生 Skill 渐进披露，图片与视频工具可随时调用；引用/回复图片在 refs=current 时优先走 AstrBot 原生 quoted-message 快速解析，失败再保留 Agent 外部解析兜底；用户未指定像素时，每个图片模型按自身可配置最大像素 AUTO_MAX 生成，用户明确指定 WIDTHxHEIGHT 时才固定像素且禁止静默缩小；配置智谱 Key 后默认优先 CogVideoX-Flash，明确可轮换的创建失败再尝试 Seedance 1.0 Pro；视频默认参数可在设置中调整。"
-short_desc: "图片 + CogVideoX/Seedance；每模型独立 AUTO_MAX，引用图快速直达。"
-version: "0.3.8"
+display_name: "Seedream 5 Pro 图片生成及原图交付"
+desc: "纯图片生成与编辑 harness：普通 API Seedream 5 Pro 主模型卡，额度/限流时回退到 Plan API Seedream 5 Pro；工具描述和参数针对 AstrBot Skills-like 两阶段模式优化，内置原生 Skill、QQ 引用图快速解析、resolved 外部图片桥、genimg 持久引用、AUTO_MAX/USER_FIXED 尺寸边界和自动原图交付。"
+short_desc: "双模型卡 Seedream 5 Pro；AstrBot 两阶段工具与原生 Skill。"
+version: "0.4.0"
 astrbot_version: ">=4.26.1"
 author: "羊膜大人"
 repo: "https://github.com/zjj1280637679-ship-it/astrbot_plugin_yangmo_image_generation"
