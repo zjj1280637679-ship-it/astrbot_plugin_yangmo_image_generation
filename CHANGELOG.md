@@ -2,6 +2,21 @@
 
 本项目采用语义化版本。
 
+## [0.4.0] - 2026-09-02
+
+### Changed
+
+- 删除全部视频工具、视频 Skill、视频客户端、视频存储和视频配置，插件收缩为纯图片能力。
+- 配置改为两张嵌套模型卡：普通 API Seedream 5 Pro 主卡、Plan API Seedream 5 Pro 回退卡。
+- Plan 卡仅在主卡明确遇到额度、限流或过载时接管；网络超时等结果未知错误不重复提交。
+- `generate_image` 固定单图输出，并将工具描述/参数说明按 AstrBot `skills_like` 两阶段模式重写。
+- 重写原生 `image-generation` Skill，补齐渐进披露、引用选择、结果闭环和全部参考资料入口。
+- 图片编辑正式支持 `resolved` 外部工具图片桥；显式引用缺失时在付费 API 前严格失败。
+- Seedream 5 Pro 的参考图上限修正为 10，WebP/GIF 会验证并转换成 PNG 后提交。
+- API Key 配置增加 `secret` 遮罩；自动投递失败不再返回假 `ok`。
+- 像素策略进入核心客户端，删除 import-time 分辨率补丁；USER_FIXED 不再静默缩小。
+- 旧版平铺 API Key 字段保留为不可见迁移兼容项，升级后可继续为新模型卡提供密钥回退。
+
 ## [0.3.8] - 2026-08-17
 
 ### Changed
